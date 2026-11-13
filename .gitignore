@@ -1,0 +1,36 @@
+# Dependencies
+node_modules/
+.venv/
+venv/
+__pycache__/
+*.pyc
+
+# Build outputs
+dist/
+build/
+*.egg-info/
+
+# Tests & caches
+.pytest_cache/
+.ruff_cache/
+coverage/
+
+# Data and Models (never commit datasets or local weights)
+data/
+*.parquet
+*.onnx
+
+# Reports raw scratch
+reports/**/raw/
+
+# Environment and secrets
+.env
+.env.*
+*.local
+
+# Editor directories
+.vscode/
+.idea/
+
+# Internal planning notes (kept out of git tracking)
+.notes/
