@@ -1,6 +1,6 @@
 # Step 0 — De-risk, Parity and Stopwatch: Implementation Plan
 
-> **For agentic workers:** execute task-by-task. Each task has ONE owner and ONE reviewer (named per task). Steps use checkbox (`- [ ]`) syntax. Work on a task branch `step0/<task-slug>`, Conventional Commits, PR, green CI, rebase merge. Report every result with command output, not claims.
+> **For implementers:** execute task-by-task. Each task has ONE owner and ONE reviewer (named per task). Steps use checkbox (`- [ ]`) syntax. Work on a task branch `step0/<task-slug>`, Conventional Commits, PR, green CI, rebase merge. Report every result with command output, not claims.
 
 **Goal:** Prove, with measurements on the owner's laptop and on free Kaggle compute, that the browser pipeline is fast enough and that browser-extracted landmarks match the training data well enough, before any real model is built.
 
@@ -35,7 +35,7 @@
 
 ### Task 1: Repository scaffold, CI and hosted empty page
 
-**Owner:** Antigravity · **Reviewer:** OpenCode · **Second reviewer (CI/deploy):** Claude
+**Owner:** Builder A · **Reviewer:** Builder B · **Second reviewer (CI/deploy):** Planner
 
 **Files:**
 - Create: `web/package.json`, `web/vite.config.ts`, `web/tsconfig.json`, `web/index.html`, `web/src/main.ts`, `web/public/_headers`
@@ -55,7 +55,7 @@
 
 ### Task 2: Browser landmark harness (webcam + file, skeleton overlay)
 
-**Owner:** OpenCode · **Reviewer:** Antigravity
+**Owner:** Builder B · **Reviewer:** Builder A
 
 **Files:**
 - Create: `web/src/landmarks/landmarkWorker.ts`, `web/src/landmarks/landmarkClient.ts`, `web/src/landmarks/types.ts`, `web/src/ui/overlay.ts`, `web/src/ui/sourceSelect.ts`
@@ -76,7 +76,7 @@
 
 ### Task 3: Stopwatch (FPS, per-stage timing, model-inference probe)
 
-**Owner:** Antigravity · **Reviewer:** OpenCode
+**Owner:** Builder A · **Reviewer:** Builder B
 
 **Files:**
 - Create: `web/src/bench/stopwatch.ts`, `web/src/bench/tickScheduler.ts`, `web/src/bench/dummyModel.ts`, `web/src/bench/benchPage.ts`, `ml/learnsign/bench/export_dummy_onnx.py`
@@ -97,7 +97,7 @@
 
 ### Task 4: Feature contract shared by Python and browser
 
-**Owner:** OpenCode · **Reviewer:** Antigravity · **Second reviewer (core logic):** Claude
+**Owner:** Builder B · **Reviewer:** Builder A · **Second reviewer (core logic):** Planner
 
 **Files:**
 - Create: `ml/learnsign/features/schema.py`, `ml/learnsign/features/normalize.py`, `web/src/features/schema.ts`, `web/src/features/normalize.ts`, `tests/golden/normalize_cases.json`
@@ -118,7 +118,7 @@
 
 ### Task 5: Quick baseline and the parity experiment (Kaggle, unattended)
 
-**Owner:** Antigravity · **Reviewer:** OpenCode · **Second reviewer (data + core logic):** Claude
+**Owner:** Builder A · **Reviewer:** Builder B · **Second reviewer (data + core logic):** Planner
 
 **Files:**
 - Create: `ml/learnsign/data/gislr.py`, `ml/learnsign/data/split.py`, `ml/learnsign/data/audit.py`, `ml/learnsign/train/quick_baseline.py`, `ml/learnsign/train/monitor.py`, `ml/learnsign/parity/extract_tasks.py`, `ml/learnsign/parity/compare.py`, `ml/notebooks/step0_parity.ipynb`
@@ -144,7 +144,7 @@
 
 ### Task 6: Browser-vs-Python extractor distance and the Step 0 gate report
 
-**Owner:** OpenCode · **Reviewer:** Antigravity
+**Owner:** Builder B · **Reviewer:** Builder A
 
 **Files:**
 - Create: `web/src/bench/exportLandmarks.ts`, `ml/learnsign/parity/browser_distance.py`, `web/e2e/fileMode.spec.ts`, `reports/step0/GATE.md`
@@ -157,13 +157,13 @@
 - [ ] **Step 1:** Test: identical arrays → `mean_l2 == 0`; a known 0.01 offset on every coordinate → `mean_l2 ≈ 0.01 * sqrt(3)`; frames where either side is NaN are excluded and counted. → FAIL → implement → PASS.
 - [ ] **Step 2:** Playwright spec runs 20 clips (local, git-ignored) through file mode in Chromium and saves JSON; the Python script compares against `extract_tasks` output.
 - [ ] **Step 3:** Write `reports/step0/GATE.md`: one table — FPS (Task 3), tick compute p95 (Task 3), face-on FPS cost (Task 3), parity gap + decision (Task 5), webcam-clip accuracy (Task 5), browser-vs-Python distance (this task) — each with PASS/FAIL against the Global Constraints and the command that produced it. State the Slice 1 consequences (train on existing files or re-extract; face on or off; resolution).
-- [ ] **Step 4:** Commit; PR; CI green. Planner (Claude) reruns the test suites and checks every number against its raw file before reporting to Om.
+- [ ] **Step 4:** Commit; PR; CI green. Planner reruns the test suites and checks every number against its raw file before reporting to Om.
 
 ---
 
 ## Order and parallelism
 
-Task 1 first. Then Tasks 2 and 4 in parallel (different owners' files do not overlap: OpenCode does 4 after 2). Task 3 after 2. Task 5 after 4. Task 6 last. Step 0 ends with `reports/step0/GATE.md` and a walkthrough for Om.
+Task 1 first. Then Tasks 2 and 4 in parallel (different owners' files do not overlap: Builder B does 4 after 2). Task 3 after 2. Task 5 after 4. Task 6 last. Step 0 ends with `reports/step0/GATE.md` and a walkthrough for Om.
 
 ## Owner (Om) actions in Step 0
 
