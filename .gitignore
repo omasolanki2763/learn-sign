@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 .venv/
 venv/
@@ -20,7 +20,9 @@ coverage/
 ml/data/
 *.parquet
 *.npy
-*.onnx
+# Local weights are ignored; browser models under web/ may be committed
+data/**/*.onnx
+ml/**/*.onnx
 !ml/learnsign/data/
 
 # Reports raw scratch
@@ -37,3 +39,6 @@ reports/**/raw/
 
 # Internal planning notes (kept out of git tracking)
 .notes/
+
+# MediaPipe Task model files are downloaded, not committed
+web/public/models/

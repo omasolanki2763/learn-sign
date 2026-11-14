@@ -7,7 +7,11 @@
     "dev": "vite",
     "build": "tsc && vite build",
     "test": "vitest run",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "models:download": "node scripts/download-models.mjs"
+  },
+  "dependencies": {
+    "@mediapipe/tasks-vision": "^0.10.18"
   },
   "devDependencies": {
     "@types/node": "^26.6.6",
