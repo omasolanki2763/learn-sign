@@ -1,4 +1,4 @@
-# Dependencies
+﻿# Dependencies
 node_modules/
 .venv/
 venv/
@@ -18,7 +18,7 @@ coverage/
 # Data and Models (never commit datasets or local weights)
 data/
 *.parquet
-*.onnx
+data/**/*.onnx
 
 # Reports raw scratch
 reports/**/raw/
@@ -34,3 +34,6 @@ reports/**/raw/
 
 # Internal planning notes (kept out of git tracking)
 .notes/
+
+# MediaPipe Task model files are downloaded, not committed
+web/public/models/
