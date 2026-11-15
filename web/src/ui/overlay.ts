@@ -56,13 +56,17 @@ export function drawOverlay(ctx: CanvasRenderingContext2D, frame: FrameLandmarks
     drawPose(ctx, pose, width, height);
   }
 
-  ctx.strokeStyle = BOX_COLORS[boxState];
+  ctx.strokeStyle = SKELETON_COLOR;
   ctx.fillStyle = SKELETON_COLOR;
 
   for (const hand of [frame.leftHand, frame.rightHand]) {
     if (hand) {
       drawHand(ctx, hand, width, height);
+      // Why switched here: the skeleton stays neutral so the verdict colour on
+      // the box is the only coloured thing the user has to read.
+      ctx.strokeStyle = BOX_COLORS[boxState];
       drawHandBox(ctx, hand, width, height);
+      ctx.strokeStyle = SKELETON_COLOR;
     }
   }
 }

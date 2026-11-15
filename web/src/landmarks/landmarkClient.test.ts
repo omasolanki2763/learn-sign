@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for the landmark worker client.
  *
  * The client is tested against a fake worker so the suite stays hermetic: no
@@ -112,4 +112,55 @@ describe('LandmarkClient', () => {
 
     await expect(client.process({} as ImageBitmap, 10)).rejects.toThrow(/disposed/i);
   });
+  it('sends a dispose message before terminating the worker', async () => {
+    const worker = new FakeWorker();
+    const client = new LandmarkClient(() => worker);
+    await client.init({ enableFace: false });
+
+    client.dispose();
+
+    expect(worker.posted).toContainEqual({ type: 'dispose' });
+    expect(worker.isTerminated).toBe(true);
+  });
+
+  it('can be initialised again after a failed init', async () => {
+    class FailingWorker extends FakeWorker {
+      override postMessage(message: unknown): void {
+        const typed = message as { type: string };
+        if (typed.type === 'init') {
+          // Why not super: a failing start must not also report ready, which is
+          // exactly what a real worker does when the model fetch fails.
+          queueMicrotask(() => this.emitError('Failed to fetch /models/hand_landmarker.task'));
+          return;
+        }
+        super.postMessage(message);
+      }
+
+      /** Sends the startup failure the real worker would send. */
+      emitError(message: string): void {
+        for (const listener of this.listeners()) {
+          listener({ data: { type: 'error', requestId: null, message } } as MessageEvent);
+        }
+      }
+
+      /** Exposes the listeners added by the client. */
+      listeners(): Array<(event: MessageEvent) => void> {
+        return (this as unknown as { messageListeners: Array<(event: MessageEvent) => void> }).messageListeners;
+      }
+    }
+
+    const failingWorker = new FailingWorker();
+    const workingWorker = new FakeWorker();
+    const workers = [failingWorker, workingWorker];
+    let attempt = 0;
+    const client = new LandmarkClient(() => workers[Math.min(attempt++, workers.length - 1)]);
+
+    await expect(client.init({ enableFace: false })).rejects.toThrow(/models/);
+    // Why a second call: after the user fixes the model files, retrying must not
+    // be blocked by the first failure.
+    await expect(client.init({ enableFace: false })).resolves.toBeUndefined();
+
+    expect(failingWorker.isTerminated).toBe(true);
+  });
 });
+

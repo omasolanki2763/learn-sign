@@ -46,6 +46,7 @@ export class LandmarkClient {
   private nextRequestId = 1;
   private readonly pendingRequests = new Map<number, PendingRequest>();
   private initWaiter: { resolve: () => void; reject: (error: Error) => void } | null = null;
+  private initPromise: Promise<void> | null = null;
   private isDisposed = false;
 
   /**
@@ -66,18 +67,29 @@ export class LandmarkClient {
     if (this.isDisposed) {
       throw new Error('LandmarkClient has been disposed');
     }
-    if (this.worker) {
-      throw new Error('LandmarkClient has already been initialised');
+    if (this.initPromise) {
+      // Why: two callers asking at once must share one worker, and a caller that
+      // asks again after success must not spawn a second one.
+      return this.initPromise;
     }
 
     const worker = this.workerFactory();
     this.worker = worker;
     worker.addEventListener('message', (event) => this.handleMessage(event.data));
 
-    await new Promise<void>((resolve, reject) => {
+    this.initPromise = new Promise<void>((resolve, reject) => {
       this.initWaiter = { resolve: () => resolve(), reject };
       worker.postMessage({ type: 'init', enableFace: options.enableFace });
+    }).catch((error: unknown) => {
+      // Why reset: a failed start (missing model, WASM error) is often fixable
+      // by the user, and a retry must not hit "already initialised".
+      this.initPromise = null;
+      this.worker = null;
+      worker.terminate();
+      throw error;
     });
+
+    return this.initPromise;
   }
 
   /**
@@ -109,6 +121,11 @@ export class LandmarkClient {
       return;
     }
     this.isDisposed = true;
+    this.initPromise = null;
+    // Why the message before terminate: terminating kills the worker before it
+    // can release the MediaPipe WASM heap, so it gets one chance to close its
+    // detectors first; terminate stays as the backstop if the message is missed.
+    this.worker?.postMessage({ type: 'dispose' });
     this.worker?.terminate();
     this.worker = null;
 

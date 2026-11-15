@@ -1,4 +1,4 @@
-﻿# LearnSign
+# LearnSign
 LearnSign is a zero-cost, browser-only, real-time American Sign Language (ASL) tutor for hearing beginners across letters, words, and sentences.
 ## Key Principles
 - **Zero Cost:** Hosted entirely as a static web application on Cloudflare Pages; models trained within free-tier GPU environments (Kaggle / Google Colab).
@@ -28,11 +28,20 @@ Prerequisites: Node.js 20+ and npm.
 ```bash
 cd web
 npm install
+npm run models:download   # Fetch the MediaPipe .task bundles into web/public/models
 npm run dev      # Start local development server
 npm run build    # Build production bundle to dist/
 npm test         # Run unit tests via Vitest
 npm run lint     # Validate TypeScript types without emit
 ```
+
+`npm run dev` without `npm run models:download` starts, but the camera stage
+cannot detect landmarks until the model files exist; the status line says so.
+
+Handedness: MediaPipe's hand landmarks are reported for a mirrored image, so its
+`Left` label is not necessarily the person's left hand. The mapping lives behind
+one constant, `SWAP_HANDEDNESS_LABELS` in `web/src/landmarks/landmarkWorker.ts`,
+and which value matches the training data is measured in Step 0 Task 6.
 ### Machine Learning (`ml/`)
 Prerequisites: Python 3.11+.
 ```bash
