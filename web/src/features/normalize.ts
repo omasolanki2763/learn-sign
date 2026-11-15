@@ -180,32 +180,24 @@ export function canonicalizeHandedness(
       output[rhIdx] = temp;
     }
 
-    // Swap bilateral pose pairs in [126:144]
-    // Slot 0 (left shoulder: 126..128) <-> Slot 1 (right shoulder: 129..131)
-    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
-      const lsIdx = frameOffset + 126 + c;
-      const rsIdx = frameOffset + 129 + c;
-      const temp = output[lsIdx];
-      output[lsIdx] = output[rsIdx];
-      output[rsIdx] = temp;
-    }
+    // Swap bilateral pose pairs in [POSE_START:POSE_END] to preserve skeleton graph automorphism:
+    // (11, 12) shoulders: slot 0 <-> slot 1
+    // (13, 14) elbows:    slot 2 <-> slot 3
+    // (15, 16) wrists:    slot 4 <-> slot 5
+    const posePairs = [
+      [0, 1],
+      [2, 3],
+      [4, 5],
+    ] as const;
 
-    // Slot 2 (left elbow: 132..134) <-> Slot 3 (right elbow: 135..137)
-    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
-      const leIdx = frameOffset + 132 + c;
-      const reIdx = frameOffset + 135 + c;
-      const temp = output[leIdx];
-      output[leIdx] = output[reIdx];
-      output[reIdx] = temp;
-    }
-
-    // Slot 4 (left wrist: 138..140) <-> Slot 5 (right wrist: 141..143)
-    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
-      const lwIdx = frameOffset + 138 + c;
-      const rwIdx = frameOffset + 141 + c;
-      const temp = output[lwIdx];
-      output[lwIdx] = output[rwIdx];
-      output[rwIdx] = temp;
+    for (const [leftSlot, rightSlot] of posePairs) {
+      const leftOffset = frameOffset + POSE_START + leftSlot * COORDINATES_PER_POINT;
+      const rightOffset = frameOffset + POSE_START + rightSlot * COORDINATES_PER_POINT;
+      for (let c = 0; c < COORDINATES_PER_POINT; c++) {
+        const temp = output[leftOffset + c];
+        output[leftOffset + c] = output[rightOffset + c];
+        output[rightOffset + c] = temp;
+      }
     }
   }
 
