@@ -50,9 +50,11 @@ function createVideoElement(): HTMLVideoElement {
  * Waits for the next presented video frame.
  *
  * @param video Video that is currently playing.
- * @returns Media time of the frame in seconds.
+ * @param useMediaClock Use the video's own timeline (files) instead of the
+ *   presentation clock (live camera).
+ * @returns Timestamp of the frame in milliseconds.
  */
-function waitForVideoFrame(video: HTMLVideoElement): Promise<number> {
+function waitForVideoFrame(video: HTMLVideoElement, useMediaClock: boolean): Promise<number> {
   // Why the feature test: requestVideoFrameCallback is absent in Safari and in
   // some test environments, and a timer is an acceptable, if less precise,
   // substitute there.
@@ -62,28 +64,56 @@ function waitForVideoFrame(video: HTMLVideoElement): Promise<number> {
 
   if (typeof frameCallbackVideo.requestVideoFrameCallback === 'function') {
     return new Promise<number>((resolve) => {
-      frameCallbackVideo.requestVideoFrameCallback?.((_now, metadata) => resolve(metadata.mediaTime));
+      frameCallbackVideo.requestVideoFrameCallback?.((now, metadata) =>
+        resolve(useMediaClock ? metadata.mediaTime * 1000 : now),
+      );
     });
   }
 
   return new Promise<number>((resolve) => {
-    setTimeout(() => resolve(video.currentTime), FALLBACK_FRAME_INTERVAL_MS);
+    setTimeout(
+      () => resolve(useMediaClock ? video.currentTime * 1000 : performance.now()),
+      FALLBACK_FRAME_INTERVAL_MS,
+    );
   });
+}
+
+/**
+ * Keeps the timestamp fed to MediaPipe strictly increasing.
+ *
+ * Why: `detectForVideo` throws, and tracking then stops for good, when two
+ * frames arrive with the same or a backwards timestamp. A timer clock or a
+ * rounded media time produces exactly that, so the caller cannot be trusted to
+ * get it right.
+ *
+ * @param candidate Timestamp the source reported, in milliseconds.
+ * @param lastTimestampMs Last timestamp handed to the detector; 0 before the first frame.
+ * @returns The candidate, or the smallest value still larger than the last one.
+ */
+export function nextTimestampMs(candidate: number, lastTimestampMs: number): number {
+  return Math.max(candidate, lastTimestampMs + 1);
 }
 
 /**
  * Turns a playing video into a stream of frames.
  *
  * @param video Playing video element.
+ * @param useMediaClock Whether timestamps come from the video's timeline.
  * @param onFinished Cleanup run when the stream ends or the consumer stops.
  * @returns Async iterable of bitmaps with capture times in milliseconds.
  */
-async function* iterateFrames(video: HTMLVideoElement, onFinished: () => void): AsyncGenerator<SourceFrame> {
+async function* iterateFrames(
+  video: HTMLVideoElement,
+  useMediaClock: boolean,
+  onFinished: () => void,
+): AsyncGenerator<SourceFrame> {
+  let lastTimestampMs = 0;
   try {
     while (!video.ended) {
-      const mediaTimeSeconds = await waitForVideoFrame(video);
+      const candidate = await waitForVideoFrame(video, useMediaClock);
+      lastTimestampMs = nextTimestampMs(candidate, lastTimestampMs);
       const bitmap = await createImageBitmap(video);
-      yield { bitmap, timestampMs: Math.round(mediaTimeSeconds * 1000) };
+      yield { bitmap, timestampMs: lastTimestampMs };
     }
   } finally {
     // Why: the stream, the object URL and the element must all be released even
@@ -125,7 +155,7 @@ export async function startSource(kind: FrameSourceKind, file?: File): Promise<A
 
     video.srcObject = stream;
     await video.play();
-    return iterateFrames(video, () => {
+    return iterateFrames(video, false, () => {
       for (const track of stream.getTracks()) {
         track.stop();
       }
@@ -141,7 +171,7 @@ export async function startSource(kind: FrameSourceKind, file?: File): Promise<A
   video.loop = false;
   await video.play();
 
-  return iterateFrames(video, () => {
+  return iterateFrames(video, true, () => {
     URL.revokeObjectURL(objectUrl);
     video.removeAttribute('src');
     video.load();
@@ -160,4 +190,6 @@ export function describeCameraError(error: unknown): string {
   }
   return 'The camera could not be started. Load a video file instead.';
 }
+
+
 
