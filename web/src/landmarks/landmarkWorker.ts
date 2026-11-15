@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Landmark worker: runs MediaPipe Tasks off the main thread.
  *
  * Why a worker at all: detection is the most expensive thing in the app. Run on
@@ -35,7 +35,77 @@ interface Detectors {
   face: FaceLandmarker | null;
 }
 
+/**
+ * Whether to flip MediaPipe's handedness labels before using them.
+ *
+ * Why this exists: the hand model is documented as assuming a mirrored
+ * ("selfie") input image - the MediaPipe hand landmarker documentation for
+ * `HandLandmarker` states the handedness is "assumed to be of the mirrored
+ * image". The camera frame the harness feeds in is not mirrored, so the model's
+ * "Left" can be the person's right hand. The training data labels hands
+ * anatomically, so which setting is right is a parity question, not a taste
+ * question: Step 0 Task 6 measures both against the dataset and this constant is
+ * the single place to flip the result.
+ */
+export const SWAP_HANDEDNESS_LABELS = false;
+
+/** One detected hand, as reported by MediaPipe, before anatomical assignment. */
+export interface HandedDetection {
+  /** Label MediaPipe reported: 'Left' or 'Right'. */
+  label: string;
+  /** Confidence of that label, 0..1. */
+  score: number;
+  /** Index into the detector's landmark array. */
+  index: number;
+}
+
+/** The chosen detection per anatomical hand. */
+export interface AssignedHands {
+  left: HandedDetection | null;
+  right: HandedDetection | null;
+}
+
 let detectors: Detectors | null = null;
+
+/**
+ * Maps MediaPipe handedness labels onto anatomical left and right hands.
+ *
+ * Two detections can carry the same label when the model is unsure; keeping the
+ * higher score is deliberate - silently letting the second one overwrite the
+ * first would make the output depend on array order.
+ *
+ * @param detections Hands the detector reported for one frame.
+ * @param swapLabels Whether to treat MediaPipe's 'Left' as the right hand.
+ * @returns At most one detection per anatomical hand.
+ */
+export function assignHands(
+  detections: readonly HandedDetection[],
+  swapLabels: boolean = SWAP_HANDEDNESS_LABELS,
+): AssignedHands {
+  const assigned: AssignedHands = { left: null, right: null };
+
+  for (const detection of detections) {
+    const reportedLeft = detection.label === 'Left';
+    const isAnatomicallyLeft = swapLabels ? !reportedLeft : reportedLeft;
+    const slot = isAnatomicallyLeft ? 'left' : 'right';
+    const current = assigned[slot];
+    if (!current || detection.score > current.score) {
+      assigned[slot] = detection;
+    }
+  }
+
+  return assigned;
+}
+
+/**
+ * True when this module really runs inside a dedicated worker.
+ *
+ * Why `window`: a dedicated worker has no `window`, and the project's tsconfig
+ * carries the DOM lib rather than the WebWorker one, so this is both correct and
+ * typechecks. The protocol tests import this file into a page-like environment,
+ * where `postMessage` and `close` mean something else entirely.
+ */
+const isDedicatedWorker = typeof window === 'undefined';
 
 /**
  * Sends a message to the client.
@@ -44,6 +114,9 @@ let detectors: Detectors | null = null;
  * @param transfer Objects whose ownership moves to the client.
  */
 function post(message: LandmarkResponse, transfer: Transferable[] = []): void {
+  if (!isDedicatedWorker) {
+    return;
+  }
   (self as unknown as Worker).postMessage(message, transfer);
 }
 
@@ -119,26 +192,22 @@ function detect(loaded: Detectors, bitmap: ImageBitmap, timestampMs: number): Fr
 
   const leftHand = new Float32Array(FLAT_HAND_LENGTH);
   const rightHand = new Float32Array(FLAT_HAND_LENGTH);
-  // Why handedness from the label rather than index: MediaPipe reports which
-  // side each detected hand belongs to, and the order of the array is not
-  // guaranteed once both hands are visible.
-  let hasLeftHand = false;
-  let hasRightHand = false;
 
-  handResult.handedness.forEach((categories, index) => {
-    const landmarks = handResult.landmarks[index];
-    if (!landmarks) {
-      return;
+  const detections: HandedDetection[] = handResult.handedness.map((categories, index) => ({
+    label: categories[0]?.categoryName ?? 'Right',
+    score: categories[0]?.score ?? 0,
+    index,
+  }));
+  const assigned = assignHands(detections);
+
+  for (const slot of ['left', 'right'] as const) {
+    const detection = assigned[slot];
+    const landmarks = detection ? handResult.landmarks[detection.index] : undefined;
+    if (!detection || !landmarks) {
+      continue;
     }
-    const label = categories[0]?.categoryName ?? '';
-    const target = label === 'Left' ? leftHand : rightHand;
-    target.set(flatten(landmarks).subarray(0, FLAT_HAND_LENGTH));
-    if (label === 'Left') {
-      hasLeftHand = true;
-    } else {
-      hasRightHand = true;
-    }
-  });
+    (slot === 'left' ? leftHand : rightHand).set(flatten(landmarks).subarray(0, FLAT_HAND_LENGTH));
+  }
 
   const poseLandmarks = poseResult.landmarks[0];
   const pose = poseLandmarks && poseLandmarks.length >= POSE_LANDMARK_COUNT
@@ -147,8 +216,8 @@ function detect(loaded: Detectors, bitmap: ImageBitmap, timestampMs: number): Fr
 
   return {
     timestampMs,
-    leftHand: hasLeftHand ? leftHand : null,
-    rightHand: hasRightHand ? rightHand : null,
+    leftHand: assigned.left ? leftHand : null,
+    rightHand: assigned.right ? rightHand : null,
     pose: pose ? new Float32Array(pose) : null,
   };
 }
@@ -156,9 +225,24 @@ function detect(loaded: Detectors, bitmap: ImageBitmap, timestampMs: number): Fr
 /**
  * Handles one request from the client.
  *
+ * Exported so the protocol can be tested without a real MediaPipe runtime.
+ *
  * @param request Message from the client.
  */
-async function handleRequest(request: LandmarkRequest): Promise<void> {
+export async function handleRequest(request: LandmarkRequest): Promise<void> {
+  if (request.type === 'dispose') {
+    // Why: the detectors hold WASM heap that only `.close()` releases; dropping
+    // the reference alone would leave the memory allocated until the worker dies.
+    detectors?.hands.close();
+    detectors?.pose.close();
+    detectors?.face?.close();
+    detectors = null;
+    if (isDedicatedWorker) {
+      (self as unknown as { close: () => void }).close();
+    }
+    return;
+  }
+
   if (request.type === 'init') {
     try {
       detectors = await loadDetectors(request.enableFace);
@@ -190,6 +274,9 @@ async function handleRequest(request: LandmarkRequest): Promise<void> {
   }
 }
 
-self.addEventListener('message', (event: MessageEvent<LandmarkRequest>) => {
-  void handleRequest(event.data);
-});
+if (isDedicatedWorker) {
+  self.addEventListener('message', (event: MessageEvent<LandmarkRequest>) => {
+    void handleRequest(event.data);
+  });
+}
+

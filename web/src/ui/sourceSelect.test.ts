@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Tests for the frame sources.
  *
  * Only the camera failure path is covered here: it is the one behaviour that
@@ -6,7 +6,7 @@
  * paths need a real decoder and belong to the manual check.
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import { CameraUnavailableError, describeCameraError, startSource } from './sourceSelect';
+import { CameraUnavailableError, describeCameraError, nextTimestampMs, startSource } from './sourceSelect';
 
 const originalMediaDevices = Object.getOwnPropertyDescriptor(navigator, 'mediaDevices');
 
@@ -54,5 +54,23 @@ describe('startSource', () => {
 
   it('refuses file mode without a file', async () => {
     await expect(startSource('file')).rejects.toThrow(/file/i);
+  });
+});
+
+describe('nextTimestampMs', () => {
+  it('passes a timestamp through when it is already increasing', () => {
+    expect(nextTimestampMs(900, 500)).toBe(900);
+  });
+
+  it('bumps a repeated timestamp so MediaPipe still sees an increase', () => {
+    expect(nextTimestampMs(500, 500)).toBe(501);
+  });
+
+  it('bumps a backwards timestamp instead of trusting it', () => {
+    expect(nextTimestampMs(400, 500)).toBe(501);
+  });
+
+  it('treats the first frame as increasing', () => {
+    expect(nextTimestampMs(0, 0)).toBe(1);
   });
 });

@@ -1,4 +1,4 @@
-/**
+﻿/**
  * Main application entry point for LearnSign.
  *
  * Mounts the landmark harness: a camera or a video file on the left, the
@@ -6,11 +6,18 @@
  * the browser; no frame ever leaves the device.
  */
 import { LandmarkClient } from './landmarks/landmarkClient';
+import type { FrameLandmarks } from './landmarks/types';
 import { drawOverlay } from './ui/overlay';
-import { describeCameraError, type FrameSourceKind, startSource, type SourceFrame } from './ui/sourceSelect';
+import {
+  CameraUnavailableError,
+  describeCameraError,
+  type FrameSourceKind,
+  startSource,
+  type SourceFrame,
+} from './ui/sourceSelect';
 
 /** Status line text while the detectors are being fetched and compiled. */
-const LOADING_MESSAGE = 'Loading landmark models…';
+const LOADING_MESSAGE = 'Loading landmark modelsâ€¦';
 
 /** Status line text once frames are flowing. */
 const RUNNING_MESSAGE = 'Tracking. Show one or both hands to the camera.';
@@ -127,6 +134,9 @@ function createHarness(root: HTMLElement): { start: () => void } | null {
     elements.status.textContent = LOADING_MESSAGE;
 
     try {
+      // Why before the source: the detectors are needed for either mode, and
+      // failing here (model missing) must not leave a camera open.
+      await client.init({ enableFace: false });
       const frames = await startSource(kind, file);
       const iterator = frames[Symbol.asyncIterator]();
       activeFrames = iterator;
@@ -139,22 +149,36 @@ function createHarness(root: HTMLElement): { start: () => void } | null {
       elements.status.textContent = RUNNING_MESSAGE;
       for (;;) {
         const next = await iterator.next();
-        if (next.done || activeFrames !== iterator) {
+        if (next.done) {
           break;
         }
 
         const { bitmap, timestampMs } = next.value;
+        if (activeFrames !== iterator) {
+          // Why close: the frame was made for a source that has since been
+          // replaced, and nobody else holds a reference to release it.
+          bitmap.close();
+          break;
+        }
+
         resizeCanvas(elements, bitmap.width, bitmap.height);
         // Why draw before process: process transfers the bitmap to the worker,
         // after which it can no longer be used here.
         videoContext.drawImage(bitmap, 0, 0, elements.videoCanvas.width, elements.videoCanvas.height);
-        const landmarks = await client.process(bitmap, timestampMs);
+
+        let landmarks: FrameLandmarks;
+        try {
+          landmarks = await client.process(bitmap, timestampMs);
+        } catch (error) {
+          // Why close: a rejected process() means the bitmap was not transferred,
+          // so this thread still owns it and must free it.
+          bitmap.close();
+          throw error;
+        }
         drawOverlay(overlayContext, landmarks, 'idle');
       }
     } catch (error) {
-      elements.status.textContent = kind === 'webcam'
-        ? describeCameraError(error)
-        : 'That video could not be played. Try another file.';
+      elements.status.textContent = describeFailure(kind, error);
     }
   };
 
@@ -200,3 +224,26 @@ function resizeCanvas(elements: HarnessElements, width: number, height: number):
 if (typeof document !== 'undefined') {
   mountApp();
 }
+
+/**
+ * Turns any failure while starting or tracking into text for the user.
+ *
+ * Why the split: only a camera failure should talk about the camera. A missing
+ * model or a crashed worker reported as "camera blocked" would send the user to
+ * fix the wrong thing.
+ *
+ * @param kind Which source was being started.
+ * @param error Whatever was thrown.
+ * @returns A sentence for the status line.
+ */
+function describeFailure(kind: FrameSourceKind, error: unknown): string {
+  if (error instanceof CameraUnavailableError) {
+    return describeCameraError(error);
+  }
+  // Why logged: the user sees a short sentence, the developer needs the cause.
+  console.error('LearnSign harness failed:', error);
+  return kind === 'webcam'
+    ? 'Tracking could not start. Check that the model files were downloaded, then reload.'
+    : 'That video could not be played. Try another file.';
+}
+
