@@ -16,9 +16,11 @@ build/
 coverage/
 
 # Data and Models (never commit datasets or local weights)
-data/
+/data/
+ml/data/
 *.parquet
 *.onnx
+!ml/learnsign/data/
 
 # Reports raw scratch
 reports/**/raw/

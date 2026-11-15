@@ -5,6 +5,7 @@ from typing import Any
 import numpy as np
 
 from learnsign.features.schema import (
+    COORDINATES_PER_POINT,
     FEATURES_PER_FRAME,
     HAND_POINTS,
     LEFT_HAND_END,
@@ -155,25 +156,21 @@ def canonicalize_handedness(seq: np.ndarray, is_left_dominant: bool) -> np.ndarr
     output[..., LEFT_HAND_START:LEFT_HAND_END] = right_hand_slice
     output[..., RIGHT_HAND_START:RIGHT_HAND_END] = left_hand_slice
 
-    # Swap bilateral pose pairs in [126:144] to preserve skeleton graph automorphism
-    # Pose: 6 landmarks * 3 coordinates = 18 elements
-    # Slot 0 (left shoulder: 126..128) <-> Slot 1 (right shoulder: 129..131)
-    left_shoulder = output[..., 126:129].copy()
-    right_shoulder = output[..., 129:132].copy()
-    output[..., 126:129] = right_shoulder
-    output[..., 129:132] = left_shoulder
+    # Swap bilateral pose pairs in [POSE_START:POSE_END] to preserve skeleton graph automorphism:
+    # (11, 12) shoulders: slot 0 <-> slot 1
+    # (13, 14) elbows:    slot 2 <-> slot 3
+    # (15, 16) wrists:    slot 4 <-> slot 5
+    pose_pairs = [(0, 1), (2, 3), (4, 5)]
+    for left_slot, right_slot in pose_pairs:
+        l_start = POSE_START + left_slot * COORDINATES_PER_POINT
+        l_end = l_start + COORDINATES_PER_POINT
+        r_start = POSE_START + right_slot * COORDINATES_PER_POINT
+        r_end = r_start + COORDINATES_PER_POINT
 
-    # Slot 2 (left elbow: 132..134) <-> Slot 3 (right elbow: 135..138)
-    left_elbow = output[..., 132:135].copy()
-    right_elbow = output[..., 135:138].copy()
-    output[..., 132:135] = right_elbow
-    output[..., 135:138] = left_elbow
-
-    # Slot 4 (left wrist: 138..140) <-> Slot 5 (right wrist: 141..144)
-    left_wrist = output[..., 138:141].copy()
-    right_wrist = output[..., 141:144].copy()
-    output[..., 138:141] = right_wrist
-    output[..., 141:144] = left_wrist
+        left_val = output[..., l_start:l_end].copy()
+        right_val = output[..., r_start:r_end].copy()
+        output[..., l_start:l_end] = right_val
+        output[..., r_start:r_end] = left_val
 
     return output
 
@@ -206,8 +203,8 @@ def estimate_dominant_hand(seq: np.ndarray) -> str:
     right_deltas = right_hands[1:] - right_hands[:-1]
 
     # Motion energy is the sum of squared 3D displacements across frames, ignoring NaNs
-    left_sq_dist = np.sum(left_deltas ** 2, axis=-1)
-    right_sq_dist = np.sum(right_deltas ** 2, axis=-1)
+    left_sq_dist = np.sum(left_deltas**2, axis=-1)
+    right_sq_dist = np.sum(right_deltas**2, axis=-1)
 
     left_energy = float(np.nansum(left_sq_dist))
     right_energy = float(np.nansum(right_sq_dist))
