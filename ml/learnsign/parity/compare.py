@@ -27,7 +27,9 @@ def compare(
     Returns:
         Dictionary with acc_dataset, acc_tasks, gap_points, and decision.
     """
-    gap_points = round(abs(acc_dataset - acc_tasks) * 100.0, 4)
+    # Signed accuracy gap: drop from original dataset to Tasks re-extraction.
+    # Only a drop exceeding threshold_points (> 3.0) triggers bulk re-extraction.
+    gap_points = round((acc_dataset - acc_tasks) * 100.0, 4)
 
     if gap_points <= threshold_points:
         decision: DecisionType = "train_on_existing"

@@ -1,6 +1,11 @@
 """Training monitor for diagnostic flags and early stopping."""
 
 
+# Default underfitting loss threshold: for num_classes=250, initial random guess loss
+# is ln(250) ≈ 5.52. A loss remaining flat above 2.0 indicates severe underfitting.
+DEFAULT_UNDERFITTING_LOSS_THRESHOLD: float = 2.0
+
+
 class EpochMonitor:
     """Tracks epoch-level metrics and identifies training diagnostics.
 
@@ -90,7 +95,10 @@ class EpochMonitor:
         if len(self.history) >= self.patience:
             recent_train_losses = [h["train_loss"] for h in self.history[-self.patience :]]
             train_loss_diff = recent_train_losses[0] - recent_train_losses[-1]
-            if train_loss_diff < self.min_delta and recent_train_losses[-1] > 2.0:
+            if (
+                train_loss_diff < self.min_delta
+                and recent_train_losses[-1] > DEFAULT_UNDERFITTING_LOSS_THRESHOLD
+            ):
                 self.stop_requested = True
                 return "underfitting"
 
@@ -98,4 +106,4 @@ class EpochMonitor:
 
     def should_stop(self) -> bool:
         """Check if training should be halted early due to patience exhaustion."""
-        return self.stop_requested or self.epochs_without_improvement >= self.patience
+        return self.stop_requested

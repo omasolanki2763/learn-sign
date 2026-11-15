@@ -33,3 +33,14 @@ def test_compare_boundary_condition() -> None:
 
     assert result["gap_points"] == pytest.approx(PARITY_GAP_POINTS, abs=1e-3)
     assert result["decision"] == "train_on_existing"
+
+
+def test_compare_tasks_higher_than_dataset() -> None:
+    """Assert compare(0.66, 0.70) produces train_on_existing with negative signed gap (-4.0 pts)."""
+    result = compare(acc_dataset=0.66, acc_tasks=0.70)
+
+    assert result["acc_dataset"] == 0.66
+    assert result["acc_tasks"] == 0.70
+    assert result["gap_points"] == pytest.approx(-4.0, abs=1e-3)
+    assert result["decision"] == "train_on_existing"
+
