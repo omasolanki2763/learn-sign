@@ -21,19 +21,25 @@ const MIN_SHOULDER_WIDTH = 1e-6;
  * Normalizes a single frame's raw landmarks into the canonical 144-feature representation.
  *
  * Normalizes coordinate space using the torso anchor:
- * - Origin: midpoint between left and right shoulders.
- * - Scale: Euclidean distance between left and right shoulders (unit shoulder width).
+ * - Origin: 2D midpoint between left and right shoulders (Mx, My).
+ * - Scale: 2D Euclidean distance between left and right shoulders (unit shoulder width).
+ * - z coordinates: divided by 2D shoulder width scale but NOT shifted, as hand z (wrist-relative)
+ *   and pose z (torso-relative) exist in distinct coordinate reference frames.
+ * - aspectRatio: optional width/height ratio applied to x coordinates before normalization
+ *   to correct for non-square video capture frames.
  * - Missing landmarks (or missing shoulders) are preserved as NaN.
  *
  * @param leftHand Flat Float32Array of length 63 (21*3) or null.
  * @param rightHand Flat Float32Array of length 63 (21*3) or null.
  * @param pose Flat Float32Array of length 99 (33*3) or length 18 (6*3), or null.
+ * @param aspectRatio Optional width/height ratio of the video stream (default 1.0).
  * @returns Flat Float32Array of length 144 containing normalized coordinates.
  */
 export function normalizeFrame(
   leftHand: Float32Array | null,
   rightHand: Float32Array | null,
-  pose: Float32Array | null
+  pose: Float32Array | null,
+  aspectRatio: number = 1.0
 ): Float32Array {
   const output = new Float32Array(FEATURES_PER_FRAME).fill(NaN);
 
@@ -44,10 +50,8 @@ export function normalizeFrame(
 
   let lsX: number;
   let lsY: number;
-  let lsZ: number;
   let rsX: number;
   let rsY: number;
-  let rsZ: number;
 
   const isFullPose = pose.length === 99 || pose.length === 33 * COORDINATES_PER_POINT;
   const isSelectedPose = pose.length === 18 || pose.length === 6 * COORDINATES_PER_POINT;
@@ -55,50 +59,42 @@ export function normalizeFrame(
   if (isFullPose) {
     const lsOffset = 11 * COORDINATES_PER_POINT;
     const rsOffset = 12 * COORDINATES_PER_POINT;
-    lsX = pose[lsOffset];
+    lsX = pose[lsOffset] * aspectRatio;
     lsY = pose[lsOffset + 1];
-    lsZ = pose[lsOffset + 2];
-    rsX = pose[rsOffset];
+    rsX = pose[rsOffset] * aspectRatio;
     rsY = pose[rsOffset + 1];
-    rsZ = pose[rsOffset + 2];
   } else if (isSelectedPose) {
     // In selected 6-pose array: slot 0 is left shoulder, slot 1 is right shoulder
-    lsX = pose[0];
+    lsX = pose[0] * aspectRatio;
     lsY = pose[1];
-    lsZ = pose[2];
-    rsX = pose[3];
+    rsX = pose[3] * aspectRatio;
     rsY = pose[4];
-    rsZ = pose[5];
   } else {
     // Unexpected pose length -> defensive NaN return
     return output;
   }
 
-  // Check if either shoulder has NaN coordinates
+  // Check if either shoulder has NaN coordinates in x or y
   if (
     Number.isNaN(lsX) ||
     Number.isNaN(lsY) ||
-    Number.isNaN(lsZ) ||
     Number.isNaN(rsX) ||
-    Number.isNaN(rsY) ||
-    Number.isNaN(rsZ)
+    Number.isNaN(rsY)
   ) {
     return output;
   }
 
-  // Torso origin: midpoint between shoulders
+  // Torso origin: 2D midpoint between shoulders
   const midX = (lsX + rsX) / 2.0;
   const midY = (lsY + rsY) / 2.0;
-  const midZ = (lsZ + rsZ) / 2.0;
 
-  // Torso scale: Euclidean distance between shoulders
+  // Torso scale: 2D Euclidean distance between shoulders
   const dx = lsX - rsX;
   const dy = lsY - rsY;
-  const dz = lsZ - rsZ;
-  const shoulderWidth = Math.sqrt(dx * dx + dy * dy + dz * dz);
+  const shoulderWidth2D = Math.sqrt(dx * dx + dy * dy);
 
   // Guard against zero or degenerate shoulder width to avoid division by zero
-  if (shoulderWidth <= MIN_SHOULDER_WIDTH || Number.isNaN(shoulderWidth)) {
+  if (shoulderWidth2D <= MIN_SHOULDER_WIDTH || Number.isNaN(shoulderWidth2D)) {
     return output;
   }
 
@@ -107,9 +103,10 @@ export function normalizeFrame(
     for (let i = 0; i < HAND_POINTS; i++) {
       const srcIdx = i * COORDINATES_PER_POINT;
       const dstIdx = LEFT_HAND_START + srcIdx;
-      output[dstIdx] = (leftHand[srcIdx] - midX) / shoulderWidth;
-      output[dstIdx + 1] = (leftHand[srcIdx + 1] - midY) / shoulderWidth;
-      output[dstIdx + 2] = (leftHand[srcIdx + 2] - midZ) / shoulderWidth;
+      output[dstIdx] = (leftHand[srcIdx] * aspectRatio - midX) / shoulderWidth2D;
+      output[dstIdx + 1] = (leftHand[srcIdx + 1] - midY) / shoulderWidth2D;
+      // Why: Hand z is relative to wrist; scale by torso width without shifting
+      output[dstIdx + 2] = leftHand[srcIdx + 2] / shoulderWidth2D;
     }
   }
 
@@ -118,9 +115,10 @@ export function normalizeFrame(
     for (let i = 0; i < HAND_POINTS; i++) {
       const srcIdx = i * COORDINATES_PER_POINT;
       const dstIdx = RIGHT_HAND_START + srcIdx;
-      output[dstIdx] = (rightHand[srcIdx] - midX) / shoulderWidth;
-      output[dstIdx + 1] = (rightHand[srcIdx + 1] - midY) / shoulderWidth;
-      output[dstIdx + 2] = (rightHand[srcIdx + 2] - midZ) / shoulderWidth;
+      output[dstIdx] = (rightHand[srcIdx] * aspectRatio - midX) / shoulderWidth2D;
+      output[dstIdx + 1] = (rightHand[srcIdx + 1] - midY) / shoulderWidth2D;
+      // Why: Hand z is relative to wrist; scale by torso width without shifting
+      output[dstIdx + 2] = rightHand[srcIdx + 2] / shoulderWidth2D;
     }
   }
 
@@ -128,9 +126,10 @@ export function normalizeFrame(
   for (let p = 0; p < POSE_IDS.length; p++) {
     const srcIdx = isFullPose ? POSE_IDS[p] * COORDINATES_PER_POINT : p * COORDINATES_PER_POINT;
     const dstIdx = POSE_START + p * COORDINATES_PER_POINT;
-    output[dstIdx] = (pose[srcIdx] - midX) / shoulderWidth;
-    output[dstIdx + 1] = (pose[srcIdx + 1] - midY) / shoulderWidth;
-    output[dstIdx + 2] = (pose[srcIdx + 2] - midZ) / shoulderWidth;
+    output[dstIdx] = (pose[srcIdx] * aspectRatio - midX) / shoulderWidth2D;
+    output[dstIdx + 1] = (pose[srcIdx + 1] - midY) / shoulderWidth2D;
+    // Why: Pose z is relative to torso; scale by torso width without shifting
+    output[dstIdx + 2] = pose[srcIdx + 2] / shoulderWidth2D;
   }
 
   return output;
@@ -142,6 +141,10 @@ export function normalizeFrame(
  * When the signer is left-dominant:
  * - Mirrors all x coordinates horizontally across the body midline (x -> -x).
  * - Swaps left-hand and right-hand feature slots so the active hand is in the right-hand slot.
+ * - Swaps bilateral pose pairs:
+ *   - (11, 12) shoulders: slot 0 <-> slot 1
+ *   - (13, 14) elbows:    slot 2 <-> slot 3
+ *   - (15, 16) wrists:    slot 4 <-> slot 5
  *
  * @param seq Flat Float32Array of length (numFrames * 144).
  * @param numFrames Number of frames in the sequence.
@@ -175,6 +178,34 @@ export function canonicalizeHandedness(
       const temp = output[lhIdx];
       output[lhIdx] = output[rhIdx];
       output[rhIdx] = temp;
+    }
+
+    // Swap bilateral pose pairs in [126:144]
+    // Slot 0 (left shoulder: 126..128) <-> Slot 1 (right shoulder: 129..131)
+    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
+      const lsIdx = frameOffset + 126 + c;
+      const rsIdx = frameOffset + 129 + c;
+      const temp = output[lsIdx];
+      output[lsIdx] = output[rsIdx];
+      output[rsIdx] = temp;
+    }
+
+    // Slot 2 (left elbow: 132..134) <-> Slot 3 (right elbow: 135..137)
+    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
+      const leIdx = frameOffset + 132 + c;
+      const reIdx = frameOffset + 135 + c;
+      const temp = output[leIdx];
+      output[leIdx] = output[reIdx];
+      output[reIdx] = temp;
+    }
+
+    // Slot 4 (left wrist: 138..140) <-> Slot 5 (right wrist: 141..143)
+    for (let c = 0; c < COORDINATES_PER_POINT; c++) {
+      const lwIdx = frameOffset + 138 + c;
+      const rwIdx = frameOffset + 141 + c;
+      const temp = output[lwIdx];
+      output[lwIdx] = output[rwIdx];
+      output[rwIdx] = temp;
     }
   }
 

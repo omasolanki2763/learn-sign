@@ -24,18 +24,24 @@ def normalize_frame(
     left_hand: np.ndarray | None,
     right_hand: np.ndarray | None,
     pose: np.ndarray | None,
+    aspect_ratio: float = 1.0,
 ) -> np.ndarray:
     """Normalize a single frame's landmarks into the canonical 144-feature representation.
 
     Normalizes coordinate space using the torso anchor:
-    - Origin: midpoint between left and right shoulders.
-    - Scale: Euclidean distance between left and right shoulders (unit shoulder width).
+    - Origin: 2D midpoint between left and right shoulders (Mx, My).
+    - Scale: 2D Euclidean distance between left and right shoulders (unit shoulder width).
+    - z coordinates: divided by 2D shoulder width scale but NOT shifted, as hand z (wrist-relative)
+      and pose z (torso-relative) exist in distinct coordinate reference frames.
+    - aspect_ratio: optional width/height ratio applied to x coordinates before normalization
+      to correct for non-square video capture frames.
     - Missing landmarks (or missing shoulders) are preserved as NaN.
 
     Args:
         left_hand: Array of shape (21, 3) or (63,) with left hand landmarks, or None.
         right_hand: Array of shape (21, 3) or (63,) with right hand landmarks, or None.
         pose: Array of shape (33, 3) or (6, 3) with upper-body pose landmarks, or None.
+        aspect_ratio: Width divided by height of the video source (default 1.0).
 
     Returns:
         float32 array of shape (144,) representing normalized landmarks. If pose or
@@ -47,52 +53,69 @@ def normalize_frame(
         # Why: Without pose landmarks, torso anchor (origin and scale) cannot be determined.
         return output
 
-    pose_arr = np.asarray(pose, dtype=np.float32)
+    pose_arr = np.asarray(pose, dtype=np.float32).copy()
 
     # Pose input can be the full 33-landmark skeleton or the 6 selected upper-body points
     if pose_arr.shape == (33, 3) or pose_arr.size == 99:
         pose_33 = pose_arr.reshape((33, 3))
-        left_shoulder = pose_33[11]
-        right_shoulder = pose_33[12]
-        selected_pose = pose_33[POSE_IDS]
+        selected_pose = pose_33[POSE_IDS].copy()
     elif pose_arr.shape == (6, 3) or pose_arr.size == 18:
-        # First two points in POSE_IDS are shoulders (11 and 12)
-        pose_6 = pose_arr.reshape((6, 3))
-        left_shoulder = pose_6[0]
-        right_shoulder = pose_6[1]
-        selected_pose = pose_6
+        selected_pose = pose_arr.reshape((6, 3)).copy()
     else:
         # Unexpected pose layout -> defensive NaN return
         return output
 
-    # Check if either shoulder has NaN coordinates
-    if np.any(np.isnan(left_shoulder)) or np.any(np.isnan(right_shoulder)):
+    # Apply aspect ratio scaling to x coordinates
+    selected_pose[:, 0] *= float(aspect_ratio)
+
+    left_shoulder = selected_pose[0]  # POSE_IDS index 11
+    right_shoulder = selected_pose[1]  # POSE_IDS index 12
+
+    # Check if either shoulder has NaN coordinates in x or y
+    if np.any(np.isnan(left_shoulder[:2])) or np.any(np.isnan(right_shoulder[:2])):
         return output
 
-    # Origin is the midpoint of both shoulders
-    midpoint = (left_shoulder + right_shoulder) / 2.0
+    # 2D origin is the midpoint of both shoulders in x and y
+    mid_x = (left_shoulder[0] + right_shoulder[0]) / 2.0
+    mid_y = (left_shoulder[1] + right_shoulder[1]) / 2.0
 
-    # Scale is the 3D Euclidean distance between shoulders
-    shoulder_width = float(np.linalg.norm(left_shoulder - right_shoulder))
+    # 2D scale is the Euclidean distance between shoulders in x and y
+    dx = left_shoulder[0] - right_shoulder[0]
+    dy = left_shoulder[1] - right_shoulder[1]
+    shoulder_width_2d = float(np.sqrt(dx * dx + dy * dy))
 
     # Guard against zero or degenerate shoulder width to avoid division by zero
-    if shoulder_width <= MIN_SHOULDER_WIDTH or np.isnan(shoulder_width):
+    if shoulder_width_2d <= MIN_SHOULDER_WIDTH or np.isnan(shoulder_width_2d):
         return output
 
     # Normalize left hand landmarks
     if left_hand is not None:
-        lh_arr = np.asarray(left_hand, dtype=np.float32).reshape((HAND_POINTS, 3))
-        lh_norm = (lh_arr - midpoint) / shoulder_width
+        lh_arr = np.asarray(left_hand, dtype=np.float32).copy().reshape((HAND_POINTS, 3))
+        lh_arr[:, 0] *= float(aspect_ratio)
+        lh_norm = np.empty_like(lh_arr)
+        lh_norm[:, 0] = (lh_arr[:, 0] - mid_x) / shoulder_width_2d
+        lh_norm[:, 1] = (lh_arr[:, 1] - mid_y) / shoulder_width_2d
+        # Why: Hand z is relative to wrist; scale by torso width without shifting
+        lh_norm[:, 2] = lh_arr[:, 2] / shoulder_width_2d
         output[LEFT_HAND_START:LEFT_HAND_END] = lh_norm.flatten()
 
     # Normalize right hand landmarks
     if right_hand is not None:
-        rh_arr = np.asarray(right_hand, dtype=np.float32).reshape((HAND_POINTS, 3))
-        rh_norm = (rh_arr - midpoint) / shoulder_width
+        rh_arr = np.asarray(right_hand, dtype=np.float32).copy().reshape((HAND_POINTS, 3))
+        rh_arr[:, 0] *= float(aspect_ratio)
+        rh_norm = np.empty_like(rh_arr)
+        rh_norm[:, 0] = (rh_arr[:, 0] - mid_x) / shoulder_width_2d
+        rh_norm[:, 1] = (rh_arr[:, 1] - mid_y) / shoulder_width_2d
+        # Why: Hand z is relative to wrist; scale by torso width without shifting
+        rh_norm[:, 2] = rh_arr[:, 2] / shoulder_width_2d
         output[RIGHT_HAND_START:RIGHT_HAND_END] = rh_norm.flatten()
 
     # Normalize selected pose landmarks
-    pose_norm = (selected_pose - midpoint) / shoulder_width
+    pose_norm = np.empty_like(selected_pose)
+    pose_norm[:, 0] = (selected_pose[:, 0] - mid_x) / shoulder_width_2d
+    pose_norm[:, 1] = (selected_pose[:, 1] - mid_y) / shoulder_width_2d
+    # Why: Pose z is relative to torso; scale by torso width without shifting
+    pose_norm[:, 2] = selected_pose[:, 2] / shoulder_width_2d
     output[POSE_START:POSE_END] = pose_norm.flatten()
 
     return output
@@ -105,6 +128,10 @@ def canonicalize_handedness(seq: np.ndarray, is_left_dominant: bool) -> np.ndarr
     - Mirrors all x coordinates horizontally across the body midline (x -> -x).
     - Swaps left-hand and right-hand landmark feature slots so the active hand is in the
       right-hand slot.
+    - Swaps bilateral pose pairs:
+      - (11, 12) shoulders: slot 0 <-> slot 1
+      - (13, 14) elbows:    slot 2 <-> slot 3
+      - (15, 16) wrists:    slot 4 <-> slot 5
 
     Args:
         seq: Array of shape (T, 144) or (144,) representing normalized features.
@@ -127,6 +154,26 @@ def canonicalize_handedness(seq: np.ndarray, is_left_dominant: bool) -> np.ndarr
     right_hand_slice = output[..., RIGHT_HAND_START:RIGHT_HAND_END].copy()
     output[..., LEFT_HAND_START:LEFT_HAND_END] = right_hand_slice
     output[..., RIGHT_HAND_START:RIGHT_HAND_END] = left_hand_slice
+
+    # Swap bilateral pose pairs in [126:144] to preserve skeleton graph automorphism
+    # Pose: 6 landmarks * 3 coordinates = 18 elements
+    # Slot 0 (left shoulder: 126..128) <-> Slot 1 (right shoulder: 129..131)
+    left_shoulder = output[..., 126:129].copy()
+    right_shoulder = output[..., 129:132].copy()
+    output[..., 126:129] = right_shoulder
+    output[..., 129:132] = left_shoulder
+
+    # Slot 2 (left elbow: 132..134) <-> Slot 3 (right elbow: 135..138)
+    left_elbow = output[..., 132:135].copy()
+    right_elbow = output[..., 135:138].copy()
+    output[..., 132:135] = right_elbow
+    output[..., 135:138] = left_elbow
+
+    # Slot 4 (left wrist: 138..140) <-> Slot 5 (right wrist: 141..144)
+    left_wrist = output[..., 138:141].copy()
+    right_wrist = output[..., 141:144].copy()
+    output[..., 138:141] = right_wrist
+    output[..., 141:144] = left_wrist
 
     return output
 
@@ -186,7 +233,6 @@ def from_gislr_frame(
         - right_hand: (21, 3) float32 array or None
         - pose: (33, 3) float32 array or None
     """
-    # Convert list of dicts to a dict of lists if needed
     if isinstance(df_frame, list):
         rows_by_type: dict[str, list[tuple[int, float, float, float]]] = {}
         for row in df_frame:
@@ -212,7 +258,6 @@ def from_gislr_frame(
         pose = _extract_from_dict("pose", 33)
         return left_hand, right_hand, pose
 
-    # If df_frame is a pandas DataFrame
     def _extract_from_df(t: str, count: int) -> np.ndarray | None:
         sub = df_frame[df_frame["type"] == t]
         if sub.empty:

@@ -1,6 +1,7 @@
 {
   "both_hands": {
-    "description": "Both hands present and valid pose; all features normalized.",
+    "name": "both_hands",
+    "description": "Both hands present and valid pose; 2D torso anchor, unshifted z.",
     "left_hand": [
       [
         0.6,
@@ -382,6 +383,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       0.5,
       1.0,
@@ -530,6 +532,7 @@
     ]
   },
   "left_only": {
+    "name": "left_only",
     "description": "Left hand present, right hand null; right hand features NaN.",
     "left_hand": [
       [
@@ -806,6 +809,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       0.5,
       1.0,
@@ -954,6 +958,7 @@
     ]
   },
   "right_only": {
+    "name": "right_only",
     "description": "Right hand present, left hand null; left hand features NaN.",
     "left_hand": null,
     "right_hand": [
@@ -1230,6 +1235,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       null,
       null,
@@ -1378,6 +1384,7 @@
     ]
   },
   "no_hands": {
+    "name": "no_hands",
     "description": "Both hands null, pose present; hands NaN, pose normalized.",
     "left_hand": null,
     "right_hand": null,
@@ -1548,6 +1555,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       null,
       null,
@@ -1696,6 +1704,7 @@
     ]
   },
   "no_pose": {
+    "name": "no_pose",
     "description": "No pose present; all 144 features NaN.",
     "left_hand": [
       [
@@ -1912,6 +1921,7 @@
       ]
     ],
     "pose": null,
+    "aspect_ratio": 1.0,
     "expected_frame": [
       null,
       null,
@@ -2060,7 +2070,8 @@
     ]
   },
   "left_dominant": {
-    "description": "3-frame sequence where left hand moves more; left dominant and canonicalized.",
+    "name": "left_dominant",
+    "description": "3-frame sequence where left hand moves more; left dominant, canonicalized with hand and pose pair swaps.",
     "sequence": [
       [
         0.5,
@@ -2630,24 +2641,24 @@
         -1.0,
         1.25,
         0.25,
+        0.5,
+        0.0,
+        0.0,
         -0.5,
         0.0,
         0.0,
-        0.5,
-        0.0,
-        0.0,
-        -1.0,
-        0.5,
-        0.25,
         0.75,
         0.5,
         -0.25,
+        -1.0,
+        0.5,
+        0.25,
+        1.0,
+        1.0,
+        -0.5,
         -1.25,
         1.0,
-        0.5,
-        1.0,
-        1.0,
-        -0.5
+        0.5
       ],
       [
         0.5,
@@ -2776,24 +2787,24 @@
         -1.1,
         1.35,
         0.35,
+        0.5,
+        0.0,
+        0.0,
         -0.5,
         0.0,
         0.0,
-        0.5,
-        0.0,
-        0.0,
-        -1.0,
-        0.5,
-        0.25,
         0.75,
         0.5,
         -0.25,
+        -1.0,
+        0.5,
+        0.25,
+        1.0,
+        1.0,
+        -0.5,
         -1.25,
         1.0,
-        0.5,
-        1.0,
-        1.0,
-        -0.5
+        0.5
       ],
       [
         0.5,
@@ -2922,29 +2933,30 @@
         -1.2,
         1.45,
         0.45,
+        0.5,
+        0.0,
+        0.0,
         -0.5,
         0.0,
         0.0,
-        0.5,
-        0.0,
-        0.0,
-        -1.0,
-        0.5,
-        0.25,
         0.75,
         0.5,
         -0.25,
+        -1.0,
+        0.5,
+        0.25,
+        1.0,
+        1.0,
+        -0.5,
         -1.25,
         1.0,
-        0.5,
-        1.0,
-        1.0,
-        -0.5
+        0.5
       ]
     ]
   },
   "shoulders_swapped": {
-    "description": "Shoulders inverted in space; width remains positive norm and normalized accordingly.",
+    "name": "shoulders_swapped",
+    "description": "Shoulders inverted in space; 2D width remains positive norm and normalized accordingly.",
     "left_hand": [
       [
         0.6,
@@ -3326,6 +3338,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       0.5,
       1.0,
@@ -3474,6 +3487,7 @@
     ]
   },
   "zero_shoulder_width": {
+    "name": "zero_shoulder_width",
     "description": "Zero shoulder width produces all NaNs to prevent division by zero.",
     "left_hand": [
       [
@@ -3856,6 +3870,7 @@
         null
       ]
     ],
+    "aspect_ratio": 1.0,
     "expected_frame": [
       null,
       null,
@@ -4001,6 +4016,538 @@
       null,
       null,
       null
+    ]
+  },
+  "aspect_ratio_scaling": {
+    "name": "aspect_ratio_scaling",
+    "description": "Applies aspect_ratio (1.5) to x coordinates before 2D shoulder normalization.",
+    "left_hand": [
+      [
+        0.6,
+        0.8,
+        0.2
+      ],
+      [
+        0.61,
+        0.805,
+        0.195
+      ],
+      [
+        0.62,
+        0.81,
+        0.19
+      ],
+      [
+        0.63,
+        0.815,
+        0.185
+      ],
+      [
+        0.64,
+        0.82,
+        0.18
+      ],
+      [
+        0.65,
+        0.825,
+        0.175
+      ],
+      [
+        0.66,
+        0.83,
+        0.17
+      ],
+      [
+        0.67,
+        0.835,
+        0.165
+      ],
+      [
+        0.68,
+        0.84,
+        0.16
+      ],
+      [
+        0.69,
+        0.845,
+        0.155
+      ],
+      [
+        0.7,
+        0.85,
+        0.15
+      ],
+      [
+        0.71,
+        0.855,
+        0.145
+      ],
+      [
+        0.72,
+        0.86,
+        0.14
+      ],
+      [
+        0.73,
+        0.865,
+        0.135
+      ],
+      [
+        0.74,
+        0.87,
+        0.13
+      ],
+      [
+        0.75,
+        0.875,
+        0.125
+      ],
+      [
+        0.76,
+        0.88,
+        0.12
+      ],
+      [
+        0.77,
+        0.885,
+        0.115
+      ],
+      [
+        0.78,
+        0.89,
+        0.11
+      ],
+      [
+        0.79,
+        0.895,
+        0.105
+      ],
+      [
+        0.8,
+        0.9,
+        0.1
+      ]
+    ],
+    "right_hand": [
+      [
+        0.2,
+        0.8,
+        -0.2
+      ],
+      [
+        0.19,
+        0.805,
+        -0.195
+      ],
+      [
+        0.18,
+        0.81,
+        -0.19
+      ],
+      [
+        0.17,
+        0.815,
+        -0.185
+      ],
+      [
+        0.16,
+        0.82,
+        -0.18
+      ],
+      [
+        0.15,
+        0.825,
+        -0.175
+      ],
+      [
+        0.14,
+        0.83,
+        -0.17
+      ],
+      [
+        0.13,
+        0.835,
+        -0.165
+      ],
+      [
+        0.12,
+        0.84,
+        -0.16
+      ],
+      [
+        0.11,
+        0.845,
+        -0.155
+      ],
+      [
+        0.1,
+        0.85,
+        -0.15
+      ],
+      [
+        0.09,
+        0.855,
+        -0.145
+      ],
+      [
+        0.08,
+        0.86,
+        -0.14
+      ],
+      [
+        0.07,
+        0.865,
+        -0.135
+      ],
+      [
+        0.06,
+        0.87,
+        -0.13
+      ],
+      [
+        0.05,
+        0.875,
+        -0.125
+      ],
+      [
+        0.04,
+        0.88,
+        -0.12
+      ],
+      [
+        0.03,
+        0.885,
+        -0.115
+      ],
+      [
+        0.02,
+        0.89,
+        -0.11
+      ],
+      [
+        0.01,
+        0.895,
+        -0.105
+      ],
+      [
+        0.0,
+        0.9,
+        -0.1
+      ]
+    ],
+    "pose": [
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        0.6,
+        0.4,
+        0.0
+      ],
+      [
+        0.2,
+        0.4,
+        0.0
+      ],
+      [
+        0.8,
+        0.6,
+        0.1
+      ],
+      [
+        0.1,
+        0.6,
+        -0.1
+      ],
+      [
+        0.9,
+        0.8,
+        0.2
+      ],
+      [
+        0.0,
+        0.8,
+        -0.2
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ],
+      [
+        null,
+        null,
+        null
+      ]
+    ],
+    "aspect_ratio": 1.5,
+    "expected_frame": [
+      0.5,
+      0.666667,
+      0.333333,
+      0.525,
+      0.675,
+      0.325,
+      0.55,
+      0.683333,
+      0.316667,
+      0.575,
+      0.691667,
+      0.308333,
+      0.6,
+      0.7,
+      0.3,
+      0.625,
+      0.708333,
+      0.291667,
+      0.65,
+      0.716667,
+      0.283333,
+      0.675,
+      0.725,
+      0.275,
+      0.7,
+      0.733333,
+      0.266667,
+      0.725,
+      0.741667,
+      0.258333,
+      0.75,
+      0.75,
+      0.25,
+      0.775,
+      0.758333,
+      0.241667,
+      0.8,
+      0.766667,
+      0.233333,
+      0.825,
+      0.775,
+      0.225,
+      0.85,
+      0.783333,
+      0.216667,
+      0.875,
+      0.791667,
+      0.208333,
+      0.9,
+      0.8,
+      0.2,
+      0.925,
+      0.808333,
+      0.191667,
+      0.95,
+      0.816667,
+      0.183333,
+      0.975,
+      0.825,
+      0.175,
+      1.0,
+      0.833333,
+      0.166667,
+      -0.5,
+      0.666667,
+      -0.333333,
+      -0.525,
+      0.675,
+      -0.325,
+      -0.55,
+      0.683333,
+      -0.316667,
+      -0.575,
+      0.691667,
+      -0.308333,
+      -0.6,
+      0.7,
+      -0.3,
+      -0.625,
+      0.708333,
+      -0.291667,
+      -0.65,
+      0.716667,
+      -0.283333,
+      -0.675,
+      0.725,
+      -0.275,
+      -0.7,
+      0.733333,
+      -0.266667,
+      -0.725,
+      0.741667,
+      -0.258333,
+      -0.75,
+      0.75,
+      -0.25,
+      -0.775,
+      0.758333,
+      -0.241667,
+      -0.8,
+      0.766667,
+      -0.233333,
+      -0.825,
+      0.775,
+      -0.225,
+      -0.85,
+      0.783333,
+      -0.216667,
+      -0.875,
+      0.791667,
+      -0.208333,
+      -0.9,
+      0.8,
+      -0.2,
+      -0.925,
+      0.808333,
+      -0.191667,
+      -0.95,
+      0.816667,
+      -0.183333,
+      -0.975,
+      0.825,
+      -0.175,
+      -1.0,
+      0.833333,
+      -0.166667,
+      0.5,
+      0.0,
+      0.0,
+      -0.5,
+      0.0,
+      0.0,
+      1.0,
+      0.333333,
+      0.166667,
+      -0.75,
+      0.333333,
+      -0.166667,
+      1.25,
+      0.666667,
+      0.333333,
+      -1.0,
+      0.666667,
+      -0.333333
     ]
   }
 }
