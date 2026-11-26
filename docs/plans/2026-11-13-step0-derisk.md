@@ -91,6 +91,7 @@
   - Bench output file `step0-bench.json`: `{ userAgent, hardwareConcurrency, resolution, enableFace, threads, fps, stages, tickComputeP95 }`.
 
 - [ ] **Step 1:** Tests: percentile maths on a known array (p50 of 1..100 = 50.5, p95 = 95.05); `shouldTick` fires 10 times across timestamps 0..1000 at 15, 30 and 60 FPS input; exported ONNX has 1.7M–2.0M parameters and loads in `onnxruntime`. → FAIL.
+- [ ] **Step 1b:** Add an `alignment` stage to the bench: a banded, incremental DTW step (rolling cost row, Sakoe-Chiba band ±15 frames, K = 5 references × 90 frames × 200 features) on random data, timed per new frame. Gate: p95 ≤ 5 ms.
 - [ ] **Step 2:** Implement; bench page runs 60 s per configuration: {face off, face on} × {1 thread, max threads}, and offers "Download JSON".
 - [ ] **Step 3:** Tests PASS. Commit; PR; CI green.
 - [ ] **Step 4 (owner action, Om):** open the hosted bench page on the laptop, run all four configurations, send the four JSON files. Agent writes `reports/step0/bench.md` (table + 5-line plain-English reading). **Gate:** face-off config has `fps ≥ 25` and `tickComputeP95 ≤ 50`.
@@ -159,11 +160,66 @@
 - [ ] **Step 3:** Write `reports/step0/GATE.md`: one table — FPS (Task 3), tick compute p95 (Task 3), face-on FPS cost (Task 3), parity gap + decision (Task 5), webcam-clip accuracy (Task 5), browser-vs-Python distance (this task) — each with PASS/FAIL against the Global Constraints and the command that produced it. State the Slice 1 consequences (train on existing files or re-extract; face on or off; resolution).
 - [ ] **Step 4:** Commit; PR; CI green. Planner reruns the test suites and checks every number against its raw file before reporting to Om.
 
+
+### Task 7: Feature contract v2 (head anchors + derived features)
+
+**Owner:** Builder A · **Reviewer:** Builder B · **Second reviewer (core logic):** Planner
+
+**Why:** the current 144 values have no head point, so chin and forehead signs (MOM vs DAD) cannot be told apart, and the per-part checks need readable quantities (finger bends, hand-to-face distance).
+
+**Files:**
+- Modify: `ml/learnsign/features/schema.py`, `ml/learnsign/features/normalize.py`, `web/src/features/schema.ts`, `web/src/features/normalize.ts`, `tests/golden/normalize_cases.json`
+- Create: `ml/learnsign/features/derived.py`, `web/src/features/derived.ts`, `tests/golden/derived_cases.json`
+- Test: `ml/tests/test_derived.py`, `web/src/features/derived.test.ts`
+
+**Interfaces:**
+- `POSE_IDS` becomes 0–16 (adds nose, eyes, ears, mouth corners). Layout and count frozen in one place and versioned (`FEATURE_CONTRACT_VERSION = 2`); every consumer reads the constants.
+- Scale fallback: shoulder width (pose 11↔12); if a shoulder is missing, eye distance (pose 2↔5) times a calibrated ratio.
+- `derived_features(frame) -> float32[D]`: 15 finger-joint bend angles per hand, fingertip-to-fingertip distances, finger spread, each wrist's distance to nose / mouth / chest centre in shoulder-widths, wrist velocity and direction (needs the previous frame), two-hand distance. x,y primary; z kept as a separate, untrusted channel.
+
+- [ ] **Step 1:** Golden cases for new layout + derived values (straight finger → bend ≈ 0°, fist → large bends; hand at nose → distance ≈ 0; shoulders missing → eye-distance scale used) shared by Python and TS. → FAIL.
+- [ ] **Step 2:** Implement both sides. → PASS; Python and TS agree within 1e-5 on every golden case.
+- [ ] **Step 3:** Update PR #5 consumers to read the new constants (no hard-coded sizes). Commit; PR; CI green.
+
+### Task 8: Live verifier spike — four candidate judges on 20 signs
+
+**Owner:** Builder A · **Reviewer:** Planner
+
+**Why:** methodology M3/M9 — measure, do not assume, which live judge is most accurate while meeting the speed limits.
+
+**Files:**
+- Create: `ml/learnsign/verify/onset.py`, `ml/learnsign/verify/align.py`, `ml/learnsign/verify/ranges.py`, `ml/learnsign/verify/perturb.py`, `ml/learnsign/verify/evaluate.py`, `reports/step0/verifier.md`
+- Test: `ml/tests/test_onset.py`, `ml/tests/test_align.py`, `ml/tests/test_ranges.py`, `ml/tests/test_perturb.py`
+
+**Scope:** Python, offline. 20 signs chosen to include minimal pairs (MOM/DAD by location, signs differing only in handshape, one two-handed sign). References from training signers only; scoring on held-out signers only.
+
+- [ ] **Step 1:** Tests: onset gate ignores a hand resting in frame and fires on a rising wrist; banded open-end alignment of a sequence against itself gives zero cost and progress 1.0, and against its first half gives progress ≈ 0.5; ranges built from references contain ≥ 90% of held-out correct frames on a synthetic case; each perturbation (location shift, handshape swap, movement reversal, missing second hand) changes exactly the part it claims. → FAIL → implement → PASS.
+- [ ] **Step 2:** Per-sign reference clustering (3–5 medoids) for sign variants; per-phase ranges (middle 90%, widened by a tolerance).
+- [ ] **Step 3:** Evaluate candidates (a) data-only ranges, (b) specs written by the Task 9 spec-writer for these 20 signs (if ready; else marked pending), (c) the small trained model from Task 5, (d) (a or b) + (c). Metrics on held-out signers: correct-sign pass rate, false-green on minimal pairs and on random wrong signs, perturbation caught + right part named, first verdict time after onset.
+- [ ] **Step 4:** `reports/step0/verifier.md`: the comparison table, which candidate wins under the speed limit, 5-line plain-English reading. Commit; PR; CI green.
+
+### Task 9: Agents — spec-writer and the agent-as-recogniser experiment
+
+**Owner:** Builder A · **Reviewer:** Planner
+
+**Why:** methodology M8 (an LLM agent authors each sign's declarative spec at build time) and M10 (measure whether an agent with sign knowledge and tools can recognise signs).
+
+**Files:**
+- Create: `ml/learnsign/agents/spec_schema.json`, `ml/learnsign/agents/tools.py`, `ml/learnsign/agents/spec_writer.py`, `ml/learnsign/agents/recogniser_experiment.py`, `reports/step0/agents.md`
+- Test: `ml/tests/test_spec_schema.py`, `ml/tests/test_agent_tools.py`
+
+**Stack:** LangGraph (MIT), Langfuse Hobby tracing (free), LLM = Gemini API free tier or local Ollama `qwen3:8b` (decided by Om's laptop RAM). Only public data is sent: sign names, ASL-LEX rows, aggregate feature statistics.
+
+- [ ] **Step 1:** Tests: the JSON Schema accepts the DOG and MOM worked examples and rejects a spec with an unknown part or a range with min > max; `get_phonology('mom')` resolves via ASL-LEX translations to MOTHER; `validate_spec` on a deliberately too-narrow spec reports which constraint failed. → FAIL → implement → PASS (tools are plain Python, testable without an LLM).
+- [ ] **Step 2:** Spec-writer graph: draft spec from phonology + statistics → `validate_spec` on validation signers → revise (max 4 rounds) → final score on held-out signers only; flag "needs human review" if gates are missed. Run on the Task 8 signs.
+- [ ] **Step 3:** Agent-as-recogniser experiment: 200 held-out clips, the agent receives contract-v2 summary statistics + spec residuals (< 1,000 tokens per clip), answers which sign; measure top-1, false-green on minimal pairs, latency and cost per decision; compare with the Task 5 model and Task 8 judges.
+- [ ] **Step 4:** `reports/step0/agents.md`: specs pass rate, rounds per sign, Langfuse trace links, experiment table, 5-line reading. Commit; PR; CI green.
+
 ---
 
 ## Order and parallelism
 
-Task 1 first. Then Tasks 2 and 4 in parallel (different owners' files do not overlap: Builder B does 4 after 2). Task 3 after 2. Task 5 after 4. Task 6 last. Step 0 ends with `reports/step0/GATE.md` and a walkthrough for Om.
+Task 1 first. Then Tasks 2 and 4 in parallel. Task 5 after 4 (on the 144 contract). After Tasks 2 and 5 merge: Task 7 (contract v2), Task 3 (stopwatch, including alignment cost), then Task 6 and Task 8 in parallel; Task 9 after the Task 9 tools and Task 8 sign list exist. `reports/step0/GATE.md` (Task 6) also summarises Tasks 8 and 9. Step 0 ends with the gate report and a walkthrough for Om.
 
 ## Owner (Om) actions in Step 0
 
