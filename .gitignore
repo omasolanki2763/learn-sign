@@ -19,6 +19,7 @@ coverage/
 /data/
 ml/data/
 *.parquet
+*.npy
 *.onnx
 !ml/learnsign/data/
 
