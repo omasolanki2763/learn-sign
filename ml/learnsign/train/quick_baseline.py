@@ -76,10 +76,11 @@ class QuickBaseline1DCNN(nn.Module):
         """Initialize 1D-CNN layers.
 
         Args:
-            in_features: Feature dimension per frame (144).
+            in_features: Feature dimension per frame (defaults to FEATURES_PER_FRAME).
             num_classes: Number of ASL gloss classes (250 for GISLR).
         """
         super().__init__()
+        self.in_features = in_features
 
         self.backbone = nn.Sequential(
             # Block 1
@@ -107,17 +108,29 @@ class QuickBaseline1DCNN(nn.Module):
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Forward pass.
 
+        Missing landmarks (undetected hand/pose or dropped frames) arrive as NaN from
+        `normalize_frame` and `resample_sequence`. Because `Conv1d`/`BatchNorm1d` cannot
+        propagate NaN, remaining NaN values are filled with 0.0 here at model input.
+
+        Rationale vs explicit presence mask channels: in torso-normalized coordinates,
+        (0.0, 0.0) coincides with the shoulder midpoint, so zero-fill alone cannot
+        distinguish an undetected hand from one resting at torso center. We keep the
+        frozen v1 feature contract (`FEATURES_PER_FRAME`, without per-part presence
+        mask channels) for Step 0 parity so existing parquets and MediaPipe Tasks
+        compare on identical inputs; explicit per-part presence channels are deferred
+        to feature contract v2, and Slice 1 browser inference matches this convention.
+
         Args:
-            x: Tensor of shape (Batch, 144, 64) or (Batch, 64, 144).
+            x: Tensor of shape (Batch, in_features, T) or (Batch, T, in_features).
 
         Returns:
             Logits of shape (Batch, num_classes).
         """
         # If input is (Batch, Frames, Channels), transpose to (Batch, Channels, Frames)
-        if x.shape[1] != FEATURES_PER_FRAME and x.shape[2] == FEATURES_PER_FRAME:
+        if x.shape[1] != self.in_features and x.shape[2] == self.in_features:
             x = x.transpose(1, 2)
 
-        # Defensively replace any missing landmark NaNs with zeros in the model input
+        # Replace any missing landmark NaNs with 0.0 at the v1 model boundary
         x = torch.nan_to_num(x, nan=0.0)
 
         feats = self.backbone(x)  # (Batch, 192, 1)

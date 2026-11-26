@@ -11,7 +11,11 @@ import torch.nn as nn
 import torch.optim as optim
 
 from learnsign.data.gislr import load_sequence
-from learnsign.features.schema import FEATURES_PER_FRAME
+from learnsign.features.schema import (
+    FEATURES_PER_FRAME,
+    LEFT_HAND_END,
+    LEFT_HAND_START,
+)
 from learnsign.train.quick_baseline import (
     DEFAULT_TARGET_FRAMES,
     MAX_MODEL_PARAMS,
@@ -122,3 +126,45 @@ def test_load_sequence_from_parquet(tmp_path: Path) -> None:
     seq = load_sequence(parquet_path)
     assert seq.shape == (2, FEATURES_PER_FRAME)
     assert not np.isnan(seq[0, 0])
+
+
+def test_quick_baseline_missing_landmarks_zero_fill_parity() -> None:
+    """Assert NaN missing landmarks zero-fill identically to explicit 0.0 inputs in forward()."""
+    torch.manual_seed(0)
+    model = QuickBaseline1DCNN(in_features=FEATURES_PER_FRAME, num_classes=10)
+    model.eval()
+
+    x_zero = torch.randn(2, DEFAULT_TARGET_FRAMES, FEATURES_PER_FRAME)
+    x_nan = x_zero.clone()
+
+    # Simulate undetected left hand across sample 0 and dropped full frame 3 in sample 1
+    x_zero[0, :, LEFT_HAND_START:LEFT_HAND_END] = 0.0
+    x_nan[0, :, LEFT_HAND_START:LEFT_HAND_END] = float("nan")
+    x_zero[1, 3, :] = 0.0
+    x_nan[1, 3, :] = float("nan")
+
+    with torch.no_grad():
+        logits_zero = model(x_zero)
+        logits_nan = model(x_nan)
+
+    assert torch.isfinite(logits_nan).all()
+    torch.testing.assert_close(logits_nan, logits_zero, atol=1e-6, rtol=1e-6)
+
+
+def test_quick_baseline_forward_docstring_documents_zero_fill_rationale() -> None:
+    """Assert forward() docstring documents the v1 144-feature zero-fill rationale vs v2 mask."""
+    doc = (QuickBaseline1DCNN.forward.__doc__ or "").lower()
+    assert "nan" in doc
+    assert "0.0" in doc or "zero" in doc
+    assert "shoulder midpoint" in doc
+    assert "presence" in doc
+
+
+def test_resample_sequence_preserves_all_nan_channel() -> None:
+    """Assert resample_sequence preserves all-NaN missing channels until model forward()."""
+    seq = np.ones((5, FEATURES_PER_FRAME), dtype=np.float32)
+    seq[:, LEFT_HAND_START:LEFT_HAND_END] = np.nan
+
+    resampled = resample_sequence(seq, target_frames=DEFAULT_TARGET_FRAMES)
+    assert np.isnan(resampled[:, LEFT_HAND_START:LEFT_HAND_END]).all()
+    assert np.isfinite(resampled[:, LEFT_HAND_END:]).all()
