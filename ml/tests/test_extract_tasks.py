@@ -192,9 +192,13 @@ def _install_fake_mediapipe(
         def release(self) -> None:
             recorded["released"].append(True)
 
-    import cv2
-
-    monkeypatch.setattr(cv2, "VideoCapture", _FakeCapture)
+    fake_cv2 = SimpleNamespace(
+        CAP_PROP_FPS=5,
+        COLOR_BGR2RGB=4,
+        VideoCapture=_FakeCapture,
+        cvtColor=lambda frame, _code: frame,
+    )
+    monkeypatch.setitem(sys.modules, "cv2", fake_cv2)
     return recorded
 
 
