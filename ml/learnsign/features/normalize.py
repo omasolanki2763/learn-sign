@@ -122,6 +122,93 @@ def normalize_frame(
     return output
 
 
+def normalize_sequence(
+    left_hands: np.ndarray | None,
+    right_hands: np.ndarray | None,
+    poses: np.ndarray,
+    aspect_ratio: float = 1.0,
+) -> np.ndarray:
+    """Vectorized torso-anchored normalization across a whole sequence of T frames.
+
+    Produces identical outputs to calling `normalize_frame` per frame, using the same
+    shoulder midpoint origin, 2D shoulder-width scale, unshifted z scaling, and
+    NaN propagation on missing landmarks or degenerate torsos.
+
+    Args:
+        left_hands: Array of shape (T, 21, 3) or None.
+        right_hands: Array of shape (T, 21, 3) or None.
+        poses: Array of shape (T, 33, 3) or (T, 6, 3).
+        aspect_ratio: Width divided by height of the video source (default 1.0).
+
+    Returns:
+        float32 array of shape (T, FEATURES_PER_FRAME).
+    """
+    poses_arr = np.asarray(poses, dtype=np.float32)
+    num_frames = poses_arr.shape[0]
+    output = np.full((num_frames, FEATURES_PER_FRAME), np.nan, dtype=np.float32)
+    if num_frames == 0:
+        return output
+
+    if poses_arr.shape[1:] == (33, COORDINATES_PER_POINT):
+        selected_pose = poses_arr[:, POSE_IDS, :].copy()
+    elif poses_arr.shape[1:] == (len(POSE_IDS), COORDINATES_PER_POINT):
+        selected_pose = poses_arr.copy()
+    else:
+        return output
+
+    aspect = float(aspect_ratio)
+    selected_pose[:, :, 0] *= aspect
+
+    left_shoulder = selected_pose[:, 0, :]
+    right_shoulder = selected_pose[:, 1, :]
+
+    mid_x = (left_shoulder[:, 0] + right_shoulder[:, 0]) / 2.0
+    mid_y = (left_shoulder[:, 1] + right_shoulder[:, 1]) / 2.0
+
+    dx = left_shoulder[:, 0] - right_shoulder[:, 0]
+    dy = left_shoulder[:, 1] - right_shoulder[:, 1]
+    shoulder_width_2d = np.sqrt(dx * dx + dy * dy)
+
+    invalid_torso = (
+        np.isnan(left_shoulder[:, 0])
+        | np.isnan(left_shoulder[:, 1])
+        | np.isnan(right_shoulder[:, 0])
+        | np.isnan(right_shoulder[:, 1])
+        | np.isnan(shoulder_width_2d)
+        | (shoulder_width_2d <= MIN_SHOULDER_WIDTH)
+    )
+    safe_width = np.where(invalid_torso, np.float32(1.0), shoulder_width_2d)[:, None]
+
+    def _normalize_part(pts: np.ndarray) -> np.ndarray:
+        arr = np.asarray(pts, dtype=np.float32).copy()
+        arr[:, :, 0] *= aspect
+        norm = np.empty_like(arr)
+        norm[:, :, 0] = (arr[:, :, 0] - mid_x[:, None]) / safe_width
+        norm[:, :, 1] = (arr[:, :, 1] - mid_y[:, None]) / safe_width
+        norm[:, :, 2] = arr[:, :, 2] / safe_width
+        return norm.reshape((num_frames, -1))
+
+    if left_hands is not None:
+        output[:, LEFT_HAND_START:LEFT_HAND_END] = _normalize_part(left_hands)
+    if right_hands is not None:
+        output[:, RIGHT_HAND_START:RIGHT_HAND_END] = _normalize_part(right_hands)
+    output[:, POSE_START:POSE_END] = (
+        np.stack(
+            [
+                (selected_pose[:, :, 0] - mid_x[:, None]) / safe_width,
+                (selected_pose[:, :, 1] - mid_y[:, None]) / safe_width,
+                selected_pose[:, :, 2] / safe_width,
+            ],
+            axis=-1,
+        )
+        .astype(np.float32, copy=False)
+        .reshape((num_frames, -1))
+    )
+
+    output[invalid_torso] = np.nan
+    return output
+
+
 def canonicalize_handedness(seq: np.ndarray, is_left_dominant: bool) -> np.ndarray:
     """Canonicalize a landmark sequence to standard right-dominant signing orientation.
 
