@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Client side handle for the landmark worker.
  *
  * Everything MediaPipe related runs inside a dedicated worker, so the video

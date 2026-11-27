@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests for the landmark worker client.
  *
  * The client is tested against a fake worker so the suite stays hermetic: no

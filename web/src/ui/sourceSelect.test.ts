@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests for the frame sources.
  *
  * Only the camera failure path is covered here: it is the one behaviour that

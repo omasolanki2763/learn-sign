@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Main application entry point for LearnSign.
  *
  * Mounts the landmark harness: a camera or a video file on the left, the
@@ -17,7 +17,7 @@ import {
 } from './ui/sourceSelect';
 
 /** Status line text while the detectors are being fetched and compiled. */
-const LOADING_MESSAGE = 'Loading landmark modelsâ€¦';
+const LOADING_MESSAGE = 'Loading landmark models…';
 
 /** Status line text once frames are flowing. */
 const RUNNING_MESSAGE = 'Tracking. Show one or both hands to the camera.';

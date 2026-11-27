@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Tests for the app shell and the harness wiring.
  *
  * The worker client and the frame source are mocked: what is under test is that
