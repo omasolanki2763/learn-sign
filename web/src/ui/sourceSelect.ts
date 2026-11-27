@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Frame sources: the webcam and a local video file.
  *
  * Both paths hand back bitmaps through one interface, so the harness does not

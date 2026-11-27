@@ -1,4 +1,4 @@
-﻿/**
+/**
  * Landmark worker: runs MediaPipe Tasks off the main thread.
  *
  * Why a worker at all: detection is the most expensive thing in the app. Run on
