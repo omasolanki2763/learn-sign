@@ -1,4 +1,4 @@
-"""Unit tests for feature normalization, schema, and handedness canonicalization."""
+"""Unit tests for v2 feature normalization, schema, and handedness canonicalization."""
 
 import json
 from pathlib import Path
@@ -13,9 +13,24 @@ from learnsign.features.normalize import (
     normalize_frame,
 )
 from learnsign.features.schema import (
+    COORDINATES_PER_POINT,
+    EYE_TO_SHOULDER_RATIO,
+    FEATURE_CONTRACT_VERSION,
     FEATURES_PER_FRAME,
     HAND_POINTS,
+    POSE_BILATERAL_PAIRS,
     POSE_IDS,
+    POSE_POINTS,
+    POSE_SLOT_LEFT_EYE,
+    POSE_SLOT_LEFT_SHOULDER,
+    POSE_SLOT_LEFT_WRIST,
+    POSE_SLOT_NOSE,
+    POSE_SLOT_RIGHT_EYE,
+    POSE_SLOT_RIGHT_SHOULDER,
+    POSE_SLOT_RIGHT_WRIST,
+    POSE_START,
+    RIGHT_HAND_END,
+    RIGHT_HAND_START,
 )
 
 
@@ -43,10 +58,13 @@ def _to_numpy_array(data: list | None) -> np.ndarray | None:
 
 
 def test_schema_constants() -> None:
-    """Verify core landmark dimensions and feature count contract."""
+    """Verify frozen contract v2 landmark dimensions and feature count contract."""
+    assert FEATURE_CONTRACT_VERSION == 2
     assert HAND_POINTS == 21
-    assert POSE_IDS == [11, 12, 13, 14, 15, 16]
-    assert FEATURES_PER_FRAME == 144
+    assert POSE_IDS == list(range(17))
+    assert POSE_POINTS == len(POSE_IDS) == 17
+    assert FEATURES_PER_FRAME == (HAND_POINTS * 2 + POSE_POINTS) * COORDINATES_PER_POINT
+    assert EYE_TO_SHOULDER_RATIO > 1.0
 
 
 @pytest.mark.parametrize(
@@ -60,6 +78,8 @@ def test_schema_constants() -> None:
         "shoulders_swapped",
         "zero_shoulder_width",
         "aspect_ratio_scaling",
+        "head_anchors",
+        "missing_shoulders_eye_fallback",
     ],
 )
 def test_normalize_frame_against_golden(golden_cases: dict, case_key: str) -> None:
@@ -77,12 +97,10 @@ def test_normalize_frame_against_golden(golden_cases: dict, case_key: str) -> No
     assert actual.shape == (FEATURES_PER_FRAME,)
     assert actual.dtype == np.float32
 
-    # Verify identical NaN mask
     actual_nan = np.isnan(actual)
     expected_nan = np.isnan(expected)
     assert np.array_equal(actual_nan, expected_nan), f"NaN mismatch in {case_key}"
 
-    # Verify non-NaN values match within atol=1e-5
     valid_mask = ~actual_nan
     if np.any(valid_mask):
         np.testing.assert_allclose(actual[valid_mask], expected[valid_mask], atol=1e-5)
@@ -114,64 +132,78 @@ def test_left_dominant_sequence_and_canonicalization(golden_cases: dict) -> None
     np.testing.assert_allclose(actual_canon[valid_mask], expected_canon[valid_mask], atol=1e-5)
 
 
-def test_mirroring_swaps_bilateral_pose_pairs() -> None:
-    """Blocker 1 test: Assert canonicalize_handedness swaps pose pairs (11,12) (13,14) (15,16)."""
-    # Create single frame with distinct values in pose slots
+def test_mirroring_swaps_bilateral_head_and_torso_pairs() -> None:
+    """Assert canonicalize_handedness swaps all bilateral head/torso pairs and keeps nose center."""
     frame = np.zeros((1, FEATURES_PER_FRAME), dtype=np.float32)
-    # Pose: slot 0 (left shoulder: 126..128) = [1.0, 2.0, 3.0]
-    #       slot 1 (right shoulder: 129..131) = [4.0, 5.0, 6.0]
-    #       slot 2 (left elbow: 132..134) = [7.0, 8.0, 9.0]
-    #       slot 3 (right elbow: 135..137) = [10.0, 11.0, 12.0]
-    #       slot 4 (left wrist: 138..140) = [13.0, 14.0, 15.0]
-    #       slot 5 (right wrist: 141..143) = [16.0, 17.0, 18.0]
-    frame[0, 126:129] = [1.0, 2.0, 3.0]
-    frame[0, 129:132] = [4.0, 5.0, 6.0]
-    frame[0, 132:135] = [7.0, 8.0, 9.0]
-    frame[0, 135:138] = [10.0, 11.0, 12.0]
-    frame[0, 138:141] = [13.0, 14.0, 15.0]
-    frame[0, 141:144] = [16.0, 17.0, 18.0]
+
+    nose_offset = POSE_START + POSE_SLOT_NOSE * COORDINATES_PER_POINT
+    frame[0, nose_offset : nose_offset + 3] = [0.5, -0.5, 0.1]
+
+    for left_slot, right_slot in POSE_BILATERAL_PAIRS:
+        l_off = POSE_START + left_slot * COORDINATES_PER_POINT
+        r_off = POSE_START + right_slot * COORDINATES_PER_POINT
+        frame[0, l_off : l_off + 3] = [float(left_slot + 1), 0.1, 0.2]
+        frame[0, r_off : r_off + 3] = [float(right_slot + 1), -0.1, -0.2]
 
     canon = canonicalize_handedness(frame, is_left_dominant=True)
 
-    # In canonicalized frame:
-    # Slot 0 should have mirrored previous slot 1: [-4.0, 5.0, 6.0]
-    # Slot 1 should have mirrored previous slot 0: [-1.0, 2.0, 3.0]
-    # Slot 2 should have mirrored previous slot 3: [-10.0, 11.0, 12.0]
-    # Slot 3 should have mirrored previous slot 2: [-7.0, 8.0, 9.0]
-    # Slot 4 should have mirrored previous slot 5: [-16.0, 17.0, 18.0]
-    # Slot 5 should have mirrored previous slot 4: [-13.0, 14.0, 15.0]
-    np.testing.assert_allclose(canon[0, 126:129], [-4.0, 5.0, 6.0], atol=1e-5)
-    np.testing.assert_allclose(canon[0, 129:132], [-1.0, 2.0, 3.0], atol=1e-5)
-    np.testing.assert_allclose(canon[0, 132:135], [-10.0, 11.0, 12.0], atol=1e-5)
-    np.testing.assert_allclose(canon[0, 135:138], [-7.0, 8.0, 9.0], atol=1e-5)
-    np.testing.assert_allclose(canon[0, 138:141], [-16.0, 17.0, 18.0], atol=1e-5)
-    np.testing.assert_allclose(canon[0, 141:144], [-13.0, 14.0, 15.0], atol=1e-5)
+    # Nose stays in midline slot with mirrored x
+    np.testing.assert_allclose(
+        canon[0, nose_offset : nose_offset + 3], [-0.5, -0.5, 0.1], atol=1e-5
+    )
+
+    # Bilateral pairs swap and mirror x -> -x
+    for left_slot, right_slot in POSE_BILATERAL_PAIRS:
+        l_off = POSE_START + left_slot * COORDINATES_PER_POINT
+        r_off = POSE_START + right_slot * COORDINATES_PER_POINT
+        np.testing.assert_allclose(
+            canon[0, l_off : l_off + 3], [-float(right_slot + 1), -0.1, -0.2], atol=1e-5
+        )
+        np.testing.assert_allclose(
+            canon[0, r_off : r_off + 3], [-float(left_slot + 1), 0.1, 0.2], atol=1e-5
+        )
 
 
 def test_z_divided_by_scale_not_shifted() -> None:
-    """Blocker 2 test: Assert z coordinates are divided by 2D shoulder width but NOT shifted."""
+    """Assert z coordinates are divided by 2D scale without shifting."""
     pose = np.full((33, 3), np.nan, dtype=np.float32)
-    # 2D shoulder distance: ls_x=0.6, rs_x=0.2, ls_y=0.4, rs_y=0.4 => 2D width = 0.4
-    # Set shoulders with non-zero z values (e.g. ls_z = 0.8, rs_z = 0.4 => midpoint would be 0.6)
-    pose[11] = [0.6, 0.4, 0.8]
-    pose[12] = [0.2, 0.4, 0.4]
+    pose[POSE_SLOT_LEFT_SHOULDER] = [0.6, 0.4, 0.8]
+    pose[POSE_SLOT_RIGHT_SHOULDER] = [0.2, 0.4, 0.4]
 
-    # Hand point with z = 0.2
-    lh = np.zeros((21, 3), dtype=np.float32)
+    lh = np.zeros((HAND_POINTS, COORDINATES_PER_POINT), dtype=np.float32)
     lh[0] = [0.6, 0.4, 0.2]
 
     out = normalize_frame(lh, None, pose)
-    # Expected z for hand point 0: 0.2 / 0.4 = 0.5 (NOT (0.2 - 0.6) / 0.4 = -1.0)
     assert np.isclose(out[2], 0.2 / 0.4, atol=1e-5)
-    # Expected z for left shoulder: 0.8 / 0.4 = 2.0 (NOT (0.8 - 0.6) / 0.4 = 0.5)
-    assert np.isclose(out[126 + 2], 0.8 / 0.4, atol=1e-5)
+    ls_z_offset = POSE_START + POSE_SLOT_LEFT_SHOULDER * COORDINATES_PER_POINT + 2
+    assert np.isclose(out[ls_z_offset], 0.8 / 0.4, atol=1e-5)
+
+
+def test_eye_fallback_when_shoulders_missing() -> None:
+    """Assert missing shoulder falls back to eye distance * EYE_TO_SHOULDER_RATIO."""
+    pose = np.full((33, 3), np.nan, dtype=np.float32)
+    pose[POSE_SLOT_LEFT_EYE] = [0.55, 0.25, 0.0]
+    pose[POSE_SLOT_RIGHT_EYE] = [0.45, 0.25, 0.0]  # eye dist = 0.1, midpoint = (0.5, 0.25)
+    pose[POSE_SLOT_RIGHT_WRIST] = [0.5, 0.55, 0.0]
+
+    rh = np.zeros((HAND_POINTS, COORDINATES_PER_POINT), dtype=np.float32)
+    rh[0] = [0.5, 0.55, 0.0]
+
+    out = normalize_frame(None, rh, pose)
+    expected_scale = 0.1 * EYE_TO_SHOULDER_RATIO
+    assert np.isclose(out[RIGHT_HAND_START], 0.0, atol=1e-5)
+    assert np.isclose(out[RIGHT_HAND_START + 1], (0.55 - 0.25) / expected_scale, atol=1e-5)
+    rw_offset = POSE_START + POSE_SLOT_RIGHT_WRIST * COORDINATES_PER_POINT
+    assert np.isclose(out[rw_offset + 1], (0.55 - 0.25) / expected_scale, atol=1e-5)
+    lw_offset = POSE_START + POSE_SLOT_LEFT_WRIST * COORDINATES_PER_POINT
+    assert np.isnan(out[lw_offset])
 
 
 def test_right_dominant_sequence_unchanged() -> None:
     """Assert right-dominant input passes through unchanged by canonicalize_handedness."""
     seq = np.zeros((3, FEATURES_PER_FRAME), dtype=np.float32)
-    seq[1, 63:126] = 0.5
-    seq[2, 63:126] = 1.0
+    seq[1, RIGHT_HAND_START:RIGHT_HAND_END] = 0.5
+    seq[2, RIGHT_HAND_START:RIGHT_HAND_END] = 1.0
 
     detected_dom = estimate_dominant_hand(seq)
     assert detected_dom == "right"
@@ -185,22 +217,22 @@ def test_from_gislr_frame() -> None:
     rows = []
     for i in range(468):
         rows.append({"type": "face", "landmark_index": i, "x": 0.1, "y": 0.2, "z": 0.3})
-    for i in range(21):
+    for i in range(HAND_POINTS):
         rows.append(
             {"type": "left_hand", "landmark_index": i, "x": 0.6 + i * 0.01, "y": 0.8, "z": 0.2}
         )
     for i in range(33):
         rows.append({"type": "pose", "landmark_index": i, "x": 0.5, "y": 0.4, "z": 0.1})
-    for i in range(21):
+    for i in range(HAND_POINTS):
         rows.append(
             {"type": "right_hand", "landmark_index": i, "x": 0.2 - i * 0.01, "y": 0.8, "z": -0.2}
         )
 
     lh, rh, pose = from_gislr_frame(rows)
 
-    assert lh is not None and lh.shape == (21, 3)
-    assert rh is not None and rh.shape == (21, 3)
-    assert pose is not None and pose.shape == (33, 3)
+    assert lh is not None and lh.shape == (HAND_POINTS, COORDINATES_PER_POINT)
+    assert rh is not None and rh.shape == (HAND_POINTS, COORDINATES_PER_POINT)
+    assert pose is not None and pose.shape == (33, COORDINATES_PER_POINT)
     np.testing.assert_allclose(lh[0], [0.6, 0.8, 0.2], atol=1e-5)
     np.testing.assert_allclose(rh[0], [0.2, 0.8, -0.2], atol=1e-5)
-    np.testing.assert_allclose(pose[11], [0.5, 0.4, 0.1], atol=1e-5)
+    np.testing.assert_allclose(pose[POSE_SLOT_LEFT_SHOULDER], [0.5, 0.4, 0.1], atol=1e-5)

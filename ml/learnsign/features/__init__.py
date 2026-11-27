@@ -1,19 +1,32 @@
 """Feature normalization and schema contracts."""
 
+from learnsign.features.derived import (
+    DERIVED_FEATURES_PER_FRAME,
+    DERIVED_PRIMARY_COUNT,
+    DERIVED_Z_COUNT,
+    DERIVED_Z_START,
+    derived_features,
+    derived_sequence,
+)
 from learnsign.features.normalize import (
     canonicalize_handedness,
     estimate_dominant_hand,
     from_gislr_frame,
     normalize_frame,
+    normalize_sequence,
 )
 from learnsign.features.schema import (
     COORDINATES_PER_POINT,
+    EYE_TO_SHOULDER_RATIO,
+    FEATURE_CONTRACT_VERSION,
     FEATURES_PER_FRAME,
     HAND_POINTS,
     LEFT_HAND_END,
     LEFT_HAND_START,
+    POSE_BILATERAL_PAIRS,
     POSE_END,
     POSE_IDS,
+    POSE_POINTS,
     POSE_START,
     RIGHT_HAND_END,
     RIGHT_HAND_START,
@@ -22,18 +35,29 @@ from learnsign.features.schema import (
 
 __all__ = [
     "COORDINATES_PER_POINT",
+    "DERIVED_FEATURES_PER_FRAME",
+    "DERIVED_PRIMARY_COUNT",
+    "DERIVED_Z_COUNT",
+    "DERIVED_Z_START",
+    "EYE_TO_SHOULDER_RATIO",
     "FEATURES_PER_FRAME",
+    "FEATURE_CONTRACT_VERSION",
     "HAND_POINTS",
     "LEFT_HAND_END",
     "LEFT_HAND_START",
+    "POSE_BILATERAL_PAIRS",
     "POSE_END",
     "POSE_IDS",
+    "POSE_POINTS",
     "POSE_START",
     "RIGHT_HAND_END",
     "RIGHT_HAND_START",
     "TOTAL_LANDMARKS_PER_FRAME",
     "canonicalize_handedness",
+    "derived_features",
+    "derived_sequence",
     "estimate_dominant_hand",
     "from_gislr_frame",
     "normalize_frame",
+    "normalize_sequence",
 ]
