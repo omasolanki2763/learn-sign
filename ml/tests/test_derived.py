@@ -55,16 +55,17 @@ def test_derived_schema_counts_consistent() -> None:
 
 @pytest.mark.parametrize(
     "case_key",
-    ["straight_hand_at_nose", "fist_with_velocity", "missing_hands"],
+    ["straight_hand_at_nose", "fist_with_velocity", "missing_hands", "zero_dt_velocity_is_nan"],
 )
 def test_derived_features_against_golden(derived_golden: dict, case_key: str) -> None:
     """Assert derived_features matches shared golden outputs within 1e-5."""
     case = derived_golden[case_key]
     frame = _to_float32_nan(case["frame"])
     prev = _to_float32_nan(case["prev_frame"]) if case["prev_frame"] is not None else None
+    dt_s = case.get("dt_s")
     expected = _to_float32_nan(case["expected"])
 
-    actual = derived_features(frame, prev_frame=prev)
+    actual = derived_features(frame, prev_frame=prev, dt_s=dt_s)
 
     assert actual.shape == (DERIVED_FEATURES_PER_FRAME,)
     assert actual.dtype == np.float32
@@ -108,12 +109,53 @@ def test_derived_sequence_shape_and_first_frame_velocity(derived_golden: dict) -
     )
     assert seq.shape == (2, FEATURES_PER_FRAME)
 
-    out = derived_sequence(seq)
+    out = derived_sequence(seq, timestamps_s=np.array([0.0, 0.1], dtype=np.float64))
     assert out.shape == (2, DERIVED_FEATURES_PER_FRAME)
     assert out.dtype == np.float32
     assert np.isnan(out[0, DERIVED_VELOCITY_START : DERIVED_VELOCITY_START + 6]).all()
+    assert np.isnan(out[0, DERIVED_Z_START : DERIVED_Z_START + 2]).all()
     np.testing.assert_allclose(
         out[1, DERIVED_VELOCITY_START + 3 : DERIVED_VELOCITY_START + 6],
-        [0.5, 0.6, -0.8],
+        [5.0, 0.6, -0.8],
         atol=1e-5,
     )
+    assert np.isclose(out[1, DERIVED_Z_START + 1], 2.0, atol=1e-5)
+
+
+def test_derived_fps_invariance_15fps_vs_30fps(derived_golden: dict) -> None:
+    """Assert identical physical wrist motion yields equal speed/dz at 15 FPS and 30 FPS."""
+    base = _to_float32_nan(derived_golden["fist_with_velocity"]["prev_frame"])
+    target = _to_float32_nan(derived_golden["fist_with_velocity"]["frame"])
+
+    # Compute constant-velocity step at 30 FPS (dt = 1/30) and 15 FPS (dt = 1/15)
+    mid = base.copy()
+    delta = target - base
+    mid[:] = base + 0.5 * delta
+
+    feat_30fps = derived_features(mid, prev_frame=base, dt_s=1.0 / 30.0)
+    feat_15fps = derived_features(target, prev_frame=base, dt_s=1.0 / 15.0)
+
+    np.testing.assert_allclose(
+        feat_30fps[DERIVED_VELOCITY_START : DERIVED_VELOCITY_START + 6],
+        feat_15fps[DERIVED_VELOCITY_START : DERIVED_VELOCITY_START + 6],
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        feat_30fps[DERIVED_Z_START : DERIVED_Z_START + 2],
+        feat_15fps[DERIVED_Z_START : DERIVED_Z_START + 2],
+        atol=1e-5,
+    )
+
+
+@pytest.mark.parametrize("bad_dt", [None, 0.0, -0.033, float("nan")])
+def test_derived_invalid_dt_returns_nan(derived_golden: dict, bad_dt: float | None) -> None:
+    """Assert velocity and temporal dz are NaN when dt_s is None, zero, negative, or NaN."""
+    vel_case = derived_golden["fist_with_velocity"]
+    frame = _to_float32_nan(vel_case["frame"])
+    prev = _to_float32_nan(vel_case["prev_frame"])
+    out = derived_features(frame, prev_frame=prev, dt_s=bad_dt)
+    assert np.isnan(out[DERIVED_VELOCITY_START : DERIVED_VELOCITY_START + 6]).all()
+    assert np.isnan(out[DERIVED_Z_START : DERIVED_Z_START + 2]).all()
+    # Two-hand spatial delta and static z difference remain finite
+    assert not np.isnan(out[DERIVED_HAND_DIST_START])
+    assert not np.isnan(out[DERIVED_Z_START + 2])

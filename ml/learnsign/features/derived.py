@@ -1,6 +1,7 @@
 """Interpretable v2 geometric derived features shared with browser inference."""
 
 import math
+from collections.abc import Sequence
 from typing import Final
 
 import numpy as np
@@ -109,6 +110,7 @@ def _midpoint_2d(pts: np.ndarray, idx_a: int, idx_b: int) -> tuple[float, float]
 def derived_features(
     frame: np.ndarray,
     prev_frame: np.ndarray | None = None,
+    dt_s: float | None = None,
 ) -> np.ndarray:
     """Compute interpretable 2D-primary derived features from a normalized v2 frame.
 
@@ -117,13 +119,15 @@ def derived_features(
     - [DERIVED_TIP_DIST_START .. ): 10 fingertip-to-fingertip 2D distances per hand
     - [DERIVED_SPREAD_START .. ): 4 adjacent finger ray spread angles (rad) per hand
     - [DERIVED_WRIST_ANCHOR_START .. ): wrist 2D distance to nose / mouth / chest per hand
-    - [DERIVED_VELOCITY_START .. ): wrist 2D (speed, dir_x, dir_y) from `prev_frame` per hand
+    - [DERIVED_VELOCITY_START .. ): wrist 2D (speed / s, dir_x, dir_y) from `prev_frame` per hand
     - [DERIVED_HAND_DIST_START]: 2D wrist-to-wrist distance
-    - [DERIVED_Z_START .. ]: separate untrusted z deltas (left_dz, right_dz, two_hand_dz)
+    - [DERIVED_Z_START .. ]: separate untrusted z channels (left_dz / s, right_dz / s, two_hand_dz)
 
     Args:
         frame: Normalized frame array of shape (FEATURES_PER_FRAME,).
         prev_frame: Optional previous normalized frame for velocity/direction channels.
+        dt_s: Elapsed seconds since `prev_frame`. Velocity and temporal wrist `dz`
+            channels remain NaN unless `dt_s` is finite and strictly positive.
 
     Returns:
         float32 array of shape (DERIVED_FEATURES_PER_FRAME,).
@@ -199,15 +203,17 @@ def derived_features(
         else None
     )
 
+    valid_dt = dt_s is not None and math.isfinite(dt_s) and dt_s > 0.0
+
     for hand, prev_hand in ((lh, prev_lh), (rh, prev_rh)):
-        if prev_hand is not None and _valid_2d(hand, 0) and _valid_2d(prev_hand, 0):
+        if prev_hand is not None and valid_dt and _valid_2d(hand, 0) and _valid_2d(prev_hand, 0):
             dx = float(hand[0, 0] - prev_hand[0, 0])
             dy = float(hand[0, 1] - prev_hand[0, 1])
-            speed = math.hypot(dx, dy)
-            if speed > MIN_SEGMENT_NORM:
-                out[idx] = speed
-                out[idx + 1] = dx / speed
-                out[idx + 2] = dy / speed
+            disp = math.hypot(dx, dy)
+            if disp > MIN_SEGMENT_NORM:
+                out[idx] = disp / float(dt_s)
+                out[idx + 1] = dx / disp
+                out[idx + 2] = dy / disp
             else:
                 out[idx] = 0.0
                 out[idx + 1] = 0.0
@@ -219,11 +225,11 @@ def derived_features(
     idx += TWO_HAND_DIST_COUNT
 
     # Untrusted z channels kept strictly separate at tail
-    if prev_lh is not None and _valid_3d(lh, 0) and _valid_3d(prev_lh, 0):
-        out[idx] = float(lh[0, 2] - prev_lh[0, 2])
+    if prev_lh is not None and valid_dt and _valid_3d(lh, 0) and _valid_3d(prev_lh, 0):
+        out[idx] = float(lh[0, 2] - prev_lh[0, 2]) / float(dt_s)
     idx += 1
-    if prev_rh is not None and _valid_3d(rh, 0) and _valid_3d(prev_rh, 0):
-        out[idx] = float(rh[0, 2] - prev_rh[0, 2])
+    if prev_rh is not None and valid_dt and _valid_3d(rh, 0) and _valid_3d(prev_rh, 0):
+        out[idx] = float(rh[0, 2] - prev_rh[0, 2]) / float(dt_s)
     idx += 1
     if _valid_3d(lh, 0) and _valid_3d(rh, 0):
         out[idx] = float(lh[0, 2] - rh[0, 2])
@@ -231,12 +237,23 @@ def derived_features(
     return out
 
 
-def derived_sequence(seq: np.ndarray) -> np.ndarray:
+def derived_sequence(
+    seq: np.ndarray,
+    timestamps_s: Sequence[float] | np.ndarray | None = None,
+) -> np.ndarray:
     """Compute derived features across every frame of a normalized (T, F) sequence."""
     seq_arr = np.asarray(seq, dtype=np.float32)
     num_frames = seq_arr.shape[0]
+    ts_arr: np.ndarray | None = None
+    if timestamps_s is not None:
+        ts_arr = np.asarray(timestamps_s, dtype=np.float64)
+        if ts_arr.shape != (num_frames,):
+            raise ValueError(
+                f"timestamps_s shape {ts_arr.shape} does not match num_frames ({num_frames},)"
+            )
     out = np.empty((num_frames, DERIVED_FEATURES_PER_FRAME), dtype=np.float32)
     for t in range(num_frames):
         prev = seq_arr[t - 1] if t > 0 else None
-        out[t] = derived_features(seq_arr[t], prev_frame=prev)
+        dt_s = float(ts_arr[t] - ts_arr[t - 1]) if (t > 0 and ts_arr is not None) else None
+        out[t] = derived_features(seq_arr[t], prev_frame=prev, dt_s=dt_s)
     return out
