@@ -18,16 +18,16 @@ DEFAULT_NUM_CLASSES: int = 250
 
 
 def resample_sequence(seq: np.ndarray, target_frames: int = DEFAULT_TARGET_FRAMES) -> np.ndarray:
-    """Resample variable-length sequence (T, 144) to a fixed length of target_frames.
+    """Resample variable-length sequence (T, FEATURES_PER_FRAME) to fixed target_frames.
 
     Applies 1D linear interpolation across the time axis for each feature dimension.
 
     Args:
-        seq: Array of shape (T, 144).
+        seq: Array of shape (T, FEATURES_PER_FRAME).
         target_frames: Fixed frame count for neural network input (default 64).
 
     Returns:
-        float32 array of shape (target_frames, 144).
+        float32 array of shape (target_frames, FEATURES_PER_FRAME).
     """
     t, num_features = seq.shape
     if t == target_frames:

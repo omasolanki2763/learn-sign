@@ -152,3 +152,20 @@ def test_load_sequence_canonicalize_flag(tmp_path: Path) -> None:
     # Cache must remain uncanonicalized when querying canonicalize=False afterwards
     raw_again = load_sequence(parquet_path, canonicalize=False)
     np.testing.assert_allclose(raw_again, raw_seq, atol=1e-5)
+
+
+def test_load_sequence_rejects_bad_first_frame_row_order(tmp_path: Path) -> None:
+    """Assert first-frame row-order guard raises ValueError when GISLR layout differs."""
+    parquet_path = tmp_path / "bad_order.parquet"
+    _write_gislr_parquet(parquet_path, n_frames=2)
+
+    df = pq.read_table(str(parquet_path)).to_pandas()
+    # Swap row 0 (face) with row 542 (right_hand) in the first frame
+    first_row = df.iloc[0].copy()
+    last_first_frame_row = df.iloc[542].copy()
+    df.iloc[0] = last_first_frame_row
+    df.iloc[542] = first_row
+    pq.write_table(pa.Table.from_pandas(df), str(parquet_path))
+
+    with pytest.raises(ValueError, match="first-frame row order"):
+        load_sequence(parquet_path, use_cache=False)
