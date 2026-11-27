@@ -30,6 +30,22 @@ _LEFT_HAND_OFFSET: Final[int] = GISLR_FACE_POINTS
 _POSE_OFFSET: Final[int] = _LEFT_HAND_OFFSET + HAND_POINTS
 _RIGHT_HAND_OFFSET: Final[int] = _POSE_OFFSET + GISLR_POSE_POINTS
 
+# Expected fixed first-frame GISLR ordering: face(468), left_hand(21), pose(33), right_hand(21).
+_EXPECTED_FIRST_FRAME_TYPES: Final[np.ndarray] = np.array(
+    ["face"] * GISLR_FACE_POINTS
+    + ["left_hand"] * HAND_POINTS
+    + ["pose"] * GISLR_POSE_POINTS
+    + ["right_hand"] * HAND_POINTS
+)
+_EXPECTED_FIRST_FRAME_INDICES: Final[np.ndarray] = np.concatenate(
+    [
+        np.arange(GISLR_FACE_POINTS, dtype=np.int64),
+        np.arange(HAND_POINTS, dtype=np.int64),
+        np.arange(GISLR_POSE_POINTS, dtype=np.int64),
+        np.arange(HAND_POINTS, dtype=np.int64),
+    ]
+)
+
 
 def _resolve_cache_path(
     parquet_path: Path,
@@ -113,7 +129,7 @@ def load_sequence(
         seq = np.load(str(cache_path), allow_pickle=False).astype(np.float32, copy=False)
 
     if seq is None:
-        table = pq.read_table(str(path), columns=["x", "y", "z"])
+        table = pq.read_table(str(path), columns=["type", "landmark_index", "x", "y", "z"])
         num_rows = len(table)
 
         if num_rows == 0:
@@ -121,6 +137,25 @@ def load_sequence(
         elif num_rows % GISLR_ROWS_PER_FRAME != 0:
             seq = load_sequence_reference(path, aspect_ratio=aspect_ratio)
         else:
+            first_types = np.asarray(
+                table["type"].slice(0, GISLR_ROWS_PER_FRAME).to_numpy(zero_copy_only=False),
+                dtype=str,
+            )
+            first_indices = np.asarray(
+                table["landmark_index"]
+                .slice(0, GISLR_ROWS_PER_FRAME)
+                .to_numpy(zero_copy_only=False),
+                dtype=np.int64,
+            )
+            if not (
+                np.all(first_types == _EXPECTED_FIRST_FRAME_TYPES)
+                and np.all(first_indices == _EXPECTED_FIRST_FRAME_INDICES)
+            ):
+                raise ValueError(
+                    f"Unexpected GISLR first-frame row order in {path}: expected face(468), "
+                    "left_hand(21), pose(33), right_hand(21) with ascending landmark_index."
+                )
+
             coords = np.column_stack(
                 [
                     table["x"].to_numpy(zero_copy_only=False),
