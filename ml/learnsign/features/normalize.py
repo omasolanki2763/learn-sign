@@ -1,12 +1,13 @@
 """Feature normalization, coordinate standardization, and handedness canonicalization."""
 
-from typing import Any
+from typing import Any, Literal
 
 import numpy as np
 
 from learnsign.features.schema import (
     COORDINATES_PER_POINT,
     EYE_TO_SHOULDER_RATIO,
+    EYE_TO_SHOULDER_Y_OFFSET,
     FEATURES_PER_FRAME,
     HAND_POINTS,
     LEFT_HAND_END,
@@ -23,6 +24,9 @@ from learnsign.features.schema import (
     RIGHT_HAND_END,
     RIGHT_HAND_START,
 )
+
+# Source anchor used to normalize a frame ("shoulders" primary, "eyes" fallback).
+AnchorSource = Literal["shoulders", "eyes"]
 
 # Minimum 2D span threshold to guard against division-by-zero on degenerate frames
 MIN_ANCHOR_SPAN: float = 1e-6
@@ -46,18 +50,19 @@ def _resolve_2d_anchor_pair(
     return mid_x, mid_y, span * ratio
 
 
-def normalize_frame(
+def normalize_frame_with_anchor(
     left_hand: np.ndarray | None,
     right_hand: np.ndarray | None,
     pose: np.ndarray | None,
     aspect_ratio: float = 1.0,
-) -> np.ndarray:
-    """Normalize a single frame's landmarks into the canonical v2 feature representation.
+) -> tuple[np.ndarray, AnchorSource | None]:
+    """Normalize a single frame's landmarks and report which anchor source was used.
 
     Normalizes coordinate space using primary shoulder anchor with eye-distance fallback:
-    - Primary: origin = shoulder midpoint (11, 12), scale = 2D shoulder width.
-    - Fallback (when either shoulder is missing/degenerate): origin = eye midpoint (2, 5),
-      scale = eye distance * EYE_TO_SHOULDER_RATIO.
+    - Primary ("shoulders"): origin = shoulder midpoint (11, 12), scale = 2D shoulder width.
+    - Fallback ("eyes", when either shoulder is missing/degenerate): scale = eye distance *
+      EYE_TO_SHOULDER_RATIO, origin = eye midpoint shifted downward by
+      scale * EYE_TO_SHOULDER_Y_OFFSET to estimate the shoulder midpoint.
     - z coordinates: divided by scale but NOT shifted (hand z and pose z have distinct origins).
     - Missing landmarks (or missing both shoulder and eye anchors) are preserved as NaN.
 
@@ -68,12 +73,13 @@ def normalize_frame(
         aspect_ratio: Width divided by height of the video source (default 1.0).
 
     Returns:
-        float32 array of shape (FEATURES_PER_FRAME,) containing normalized landmarks.
+        Tuple `(features, anchor_source)` where `features` is a float32 array of shape
+        `(FEATURES_PER_FRAME,)` and `anchor_source` is `"shoulders"`, `"eyes"`, or `None`.
     """
     output = np.full(FEATURES_PER_FRAME, np.nan, dtype=np.float32)
 
     if pose is None:
-        return output
+        return output, None
 
     pose_arr = np.asarray(pose, dtype=np.float32).copy()
 
@@ -87,25 +93,30 @@ def normalize_frame(
     ):
         selected_pose = pose_arr.reshape((POSE_POINTS, COORDINATES_PER_POINT)).copy()
     else:
-        return output
+        return output, None
 
     aspect = float(aspect_ratio)
     selected_pose[:, 0] *= aspect
 
+    anchor_source: AnchorSource | None = None
     anchor = _resolve_2d_anchor_pair(
         selected_pose[POSE_SLOT_LEFT_SHOULDER],
         selected_pose[POSE_SLOT_RIGHT_SHOULDER],
     )
-    if anchor is None:
-        anchor = _resolve_2d_anchor_pair(
+    if anchor is not None:
+        mid_x, mid_y, scale_2d = anchor
+        anchor_source = "shoulders"
+    else:
+        eye_anchor = _resolve_2d_anchor_pair(
             selected_pose[POSE_SLOT_LEFT_EYE],
             selected_pose[POSE_SLOT_RIGHT_EYE],
             ratio=EYE_TO_SHOULDER_RATIO,
         )
-    if anchor is None:
-        return output
-
-    mid_x, mid_y, scale_2d = anchor
+        if eye_anchor is None:
+            return output, None
+        mid_x, eye_mid_y, scale_2d = eye_anchor
+        mid_y = eye_mid_y + scale_2d * EYE_TO_SHOULDER_Y_OFFSET
+        anchor_source = "eyes"
 
     if left_hand is not None:
         lh_arr = np.asarray(left_hand, dtype=np.float32).copy().reshape((HAND_POINTS, 3))
@@ -131,32 +142,47 @@ def normalize_frame(
     pose_norm[:, 2] = selected_pose[:, 2] / scale_2d
     output[POSE_START:POSE_END] = pose_norm.flatten()
 
-    return output
+    return output, anchor_source
 
 
-def normalize_sequence(
+def normalize_frame(
+    left_hand: np.ndarray | None,
+    right_hand: np.ndarray | None,
+    pose: np.ndarray | None,
+    aspect_ratio: float = 1.0,
+) -> np.ndarray:
+    """Normalize a single frame's landmarks into the canonical v2 feature representation."""
+    features, _ = normalize_frame_with_anchor(
+        left_hand, right_hand, pose, aspect_ratio=aspect_ratio
+    )
+    return features
+
+
+def normalize_sequence_with_anchors(
     left_hands: np.ndarray | None,
     right_hands: np.ndarray | None,
     poses: np.ndarray,
     aspect_ratio: float = 1.0,
-) -> np.ndarray:
-    """Vectorized anchor normalization across a sequence of T frames.
+) -> tuple[np.ndarray, list[AnchorSource | None]]:
+    """Vectorized anchor normalization across a sequence of T frames with per-frame anchor source.
 
-    Produces identical outputs to calling `normalize_frame` per frame (including
-    shoulder primary anchor, eye-distance fallback, unshifted z scaling, and NaN rules).
+    Produces identical outputs to calling `normalize_frame_with_anchor` per frame (including
+    shoulder primary anchor, eye-distance fallback with estimated shoulder-midpoint origin,
+    unshifted z scaling, and NaN rules).
     """
     poses_arr = np.asarray(poses, dtype=np.float32)
     num_frames = poses_arr.shape[0]
     output = np.full((num_frames, FEATURES_PER_FRAME), np.nan, dtype=np.float32)
+    empty_sources: list[AnchorSource | None] = [None] * num_frames
     if num_frames == 0:
-        return output
+        return output, empty_sources
 
     if poses_arr.shape[1:] == (33, COORDINATES_PER_POINT):
         selected_pose = poses_arr[:, POSE_IDS, :].copy()
     elif poses_arr.shape[1:] == (POSE_POINTS, COORDINATES_PER_POINT):
         selected_pose = poses_arr.copy()
     else:
-        return output
+        return output, empty_sources
 
     aspect = float(aspect_ratio)
     selected_pose[:, :, 0] *= aspect
@@ -190,7 +216,7 @@ def normalize_sequence(
 
     anchor_valid = s_valid | e_valid
     mid_x = np.where(s_valid, s_mx, e_mx)
-    mid_y = np.where(s_valid, s_my, e_my)
+    mid_y = np.where(s_valid, s_my, e_my + e_scale * EYE_TO_SHOULDER_Y_OFFSET)
     scale_2d = np.where(s_valid, s_scale, e_scale)
     safe_scale = np.where(anchor_valid, scale_2d, np.float32(1.0))[:, None]
 
@@ -221,6 +247,23 @@ def normalize_sequence(
     )
 
     output[~anchor_valid] = np.nan
+    anchor_sources: list[AnchorSource | None] = [
+        "shoulders" if s_valid[t] else ("eyes" if e_valid[t] else None)
+        for t in range(num_frames)
+    ]
+    return output, anchor_sources
+
+
+def normalize_sequence(
+    left_hands: np.ndarray | None,
+    right_hands: np.ndarray | None,
+    poses: np.ndarray,
+    aspect_ratio: float = 1.0,
+) -> np.ndarray:
+    """Vectorized anchor normalization across a sequence of T frames."""
+    output, _ = normalize_sequence_with_anchors(
+        left_hands, right_hands, poses, aspect_ratio=aspect_ratio
+    )
     return output
 
 
