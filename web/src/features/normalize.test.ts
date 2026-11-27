@@ -1,5 +1,5 @@
 /**
- * Unit tests verifying feature normalization and handedness canonicalization against golden cases.
+ * Unit tests verifying v2 feature normalization and handedness canonicalization against golden cases.
  */
 import { describe, it, expect } from 'vitest';
 import * as fs from 'node:fs';
@@ -7,9 +7,20 @@ import * as path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 import {
-  HAND_POINTS,
-  POSE_IDS,
+  COORDINATES_PER_POINT,
+  EYE_TO_SHOULDER_RATIO,
+  FEATURE_CONTRACT_VERSION,
   FEATURES_PER_FRAME,
+  HAND_POINTS,
+  POSE_BILATERAL_PAIRS,
+  POSE_IDS,
+  POSE_POINTS,
+  POSE_SLOT_LEFT_SHOULDER,
+  POSE_SLOT_NOSE,
+  POSE_SLOT_RIGHT_SHOULDER,
+  POSE_START,
+  RIGHT_HAND_END,
+  RIGHT_HAND_START,
 } from './schema';
 import {
   normalizeFrame,
@@ -20,9 +31,9 @@ import {
 interface GoldenCase {
   name: string;
   description: string;
-  left_hand?: number[][] | null;
-  right_hand?: number[][] | null;
-  pose?: number[][] | null;
+  left_hand?: (number | null)[][] | null;
+  right_hand?: (number | null)[][] | null;
+  pose?: (number | null)[][] | null;
   aspect_ratio?: number;
   expected_frame?: (number | null)[];
   sequence?: (number | null)[][];
@@ -32,8 +43,7 @@ interface GoldenCase {
 
 type GoldenData = Record<string, GoldenCase>;
 
-describe('Feature Contract & Normalization', () => {
-  // Why: Resolve path to golden cases file stored in repo root tests/golden/
+describe('Feature Contract v2 & Normalization', () => {
   const currentDirectory = path.dirname(fileURLToPath(import.meta.url));
   const goldenPath = path.resolve(currentDirectory, '../../../tests/golden/normalize_cases.json');
   const goldenCases: GoldenData = JSON.parse(fs.readFileSync(goldenPath, 'utf-8'));
@@ -47,22 +57,26 @@ describe('Feature Contract & Normalization', () => {
     return arr;
   }
 
-  function flatten2D(data: number[][] | null | undefined): Float32Array | null {
+  function flatten2D(data: (number | null)[][] | null | undefined): Float32Array | null {
     if (!data) return null;
     const flat = new Float32Array(data.length * data[0].length);
     let idx = 0;
     for (let r = 0; r < data.length; r++) {
       for (let c = 0; c < data[r].length; c++) {
-        flat[idx++] = data[r][c];
+        const val = data[r][c];
+        flat[idx++] = val === null ? NaN : val;
       }
     }
     return flat;
   }
 
-  it('verifies schema constants contract', () => {
+  it('verifies schema constants contract v2', () => {
+    expect(FEATURE_CONTRACT_VERSION).toBe(2);
     expect(HAND_POINTS).toBe(21);
-    expect(POSE_IDS).toEqual([11, 12, 13, 14, 15, 16]);
-    expect(FEATURES_PER_FRAME).toBe(144);
+    expect(POSE_IDS).toEqual([0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
+    expect(POSE_POINTS).toBe(POSE_IDS.length);
+    expect(FEATURES_PER_FRAME).toBe((HAND_POINTS * 2 + POSE_POINTS) * COORDINATES_PER_POINT);
+    expect(EYE_TO_SHOULDER_RATIO).toBeGreaterThan(1.0);
   });
 
   const singleFrameCases = [
@@ -74,6 +88,8 @@ describe('Feature Contract & Normalization', () => {
     'shoulders_swapped',
     'zero_shoulder_width',
     'aspect_ratio_scaling',
+    'head_anchors',
+    'missing_shoulders_eye_fallback',
   ];
 
   for (const caseKey of singleFrameCases) {
@@ -101,65 +117,49 @@ describe('Feature Contract & Normalization', () => {
     });
   }
 
-  it('Blocker 1: swaps bilateral pose pairs on handedness canonicalization', () => {
+  it('swaps bilateral head and torso pairs on handedness canonicalization', () => {
     const frame = new Float32Array(FEATURES_PER_FRAME);
-    // Pose: slot 0 (left shoulder: 126..128) = [1.0, 2.0, 3.0]
-    //       slot 1 (right shoulder: 129..131) = [4.0, 5.0, 6.0]
-    //       slot 2 (left elbow: 132..134) = [7.0, 8.0, 9.0]
-    //       slot 3 (right elbow: 135..137) = [10.0, 11.0, 12.0]
-    //       slot 4 (left wrist: 138..140) = [13.0, 14.0, 15.0]
-    //       slot 5 (right wrist: 141..143) = [16.0, 17.0, 18.0]
-    frame.set([1.0, 2.0, 3.0], 126);
-    frame.set([4.0, 5.0, 6.0], 129);
-    frame.set([7.0, 8.0, 9.0], 132);
-    frame.set([10.0, 11.0, 12.0], 135);
-    frame.set([13.0, 14.0, 15.0], 138);
-    frame.set([16.0, 17.0, 18.0], 141);
+    const noseOff = POSE_START + POSE_SLOT_NOSE * COORDINATES_PER_POINT;
+    frame.set([0.5, -0.5, 0.1], noseOff);
+
+    for (const [leftSlot, rightSlot] of POSE_BILATERAL_PAIRS) {
+      frame.set([leftSlot + 1, 0.1, 0.2], POSE_START + leftSlot * COORDINATES_PER_POINT);
+      frame.set([rightSlot + 1, -0.1, -0.2], POSE_START + rightSlot * COORDINATES_PER_POINT);
+    }
 
     const canon = canonicalizeHandedness(frame, 1, true);
 
-    // Slot 0 (left shoulder) should now hold mirrored previous slot 1 (right shoulder)
-    expect(canon[126]).toBeCloseTo(-4.0, 5);
-    expect(canon[127]).toBeCloseTo(5.0, 5);
-    expect(canon[128]).toBeCloseTo(6.0, 5);
+    expect(canon[noseOff]).toBeCloseTo(-0.5, 5);
+    expect(canon[noseOff + 1]).toBeCloseTo(-0.5, 5);
+    expect(canon[noseOff + 2]).toBeCloseTo(0.1, 5);
 
-    // Slot 1 (right shoulder) should now hold mirrored previous slot 0 (left shoulder)
-    expect(canon[129]).toBeCloseTo(-1.0, 5);
-    expect(canon[130]).toBeCloseTo(2.0, 5);
-    expect(canon[131]).toBeCloseTo(3.0, 5);
-
-    // Slot 2 <-> 3 (elbows)
-    expect(canon[132]).toBeCloseTo(-10.0, 5);
-    expect(canon[135]).toBeCloseTo(-7.0, 5);
-
-    // Slot 4 <-> 5 (wrists)
-    expect(canon[138]).toBeCloseTo(-16.0, 5);
-    expect(canon[141]).toBeCloseTo(-13.0, 5);
+    for (const [leftSlot, rightSlot] of POSE_BILATERAL_PAIRS) {
+      const lOff = POSE_START + leftSlot * COORDINATES_PER_POINT;
+      const rOff = POSE_START + rightSlot * COORDINATES_PER_POINT;
+      expect(canon[lOff]).toBeCloseTo(-(rightSlot + 1), 5);
+      expect(canon[lOff + 1]).toBeCloseTo(-0.1, 5);
+      expect(canon[rOff]).toBeCloseTo(-(leftSlot + 1), 5);
+      expect(canon[rOff + 1]).toBeCloseTo(0.1, 5);
+    }
   });
 
-  it('Blocker 2: divides z by 2D shoulder width without shifting', () => {
-    const pose = new Float32Array(99).fill(NaN);
-    // 2D distance: lsX=0.6, rsX=0.2, lsY=0.4, rsY=0.4 => 2D width = 0.4
-    // Set shoulders with non-zero z values (lsZ = 0.8, rsZ = 0.4 => midpoint would be 0.6)
-    pose[11 * 3] = 0.6;
-    pose[11 * 3 + 1] = 0.4;
-    pose[11 * 3 + 2] = 0.8;
+  it('divides z by 2D shoulder width without shifting', () => {
+    const pose = new Float32Array(33 * COORDINATES_PER_POINT).fill(NaN);
+    pose.set([0.6, 0.4, 0.8], POSE_SLOT_LEFT_SHOULDER * COORDINATES_PER_POINT);
+    pose.set([0.2, 0.4, 0.4], POSE_SLOT_RIGHT_SHOULDER * COORDINATES_PER_POINT);
 
-    pose[12 * 3] = 0.2;
-    pose[12 * 3 + 1] = 0.4;
-    pose[12 * 3 + 2] = 0.4;
-
-    const lh = new Float32Array(63).fill(NaN);
+    const lh = new Float32Array(HAND_POINTS * COORDINATES_PER_POINT).fill(NaN);
     lh[0] = 0.6;
     lh[1] = 0.4;
-    lh[2] = 0.2; // z = 0.2
+    lh[2] = 0.2;
 
     const out = normalizeFrame(lh, null, pose);
 
-    // Expected z for hand point 0: 0.2 / 0.4 = 0.5 (NOT (0.2 - 0.6) / 0.4 = -1.0)
     expect(out[2]).toBeCloseTo(0.2 / 0.4, 5);
-    // Expected z for left shoulder: 0.8 / 0.4 = 2.0 (NOT (0.8 - 0.6) / 0.4 = 0.5)
-    expect(out[126 + 2]).toBeCloseTo(0.8 / 0.4, 5);
+    expect(out[POSE_START + POSE_SLOT_LEFT_SHOULDER * COORDINATES_PER_POINT + 2]).toBeCloseTo(
+      0.8 / 0.4,
+      5
+    );
   });
 
   it('detects left-dominant signer and canonicalizes sequence', () => {
@@ -195,7 +195,7 @@ describe('Feature Contract & Normalization', () => {
     const numFrames = 3;
     const seq = new Float32Array(numFrames * FEATURES_PER_FRAME);
     for (let f = 1; f < numFrames; f++) {
-      for (let i = 63; i < 126; i++) {
+      for (let i = RIGHT_HAND_START; i < RIGHT_HAND_END; i++) {
         seq[f * FEATURES_PER_FRAME + i] = f * 0.5;
       }
     }
