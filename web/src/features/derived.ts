@@ -132,10 +132,13 @@ function poseMidpoint2D(
 
 /**
  * Computes interpretable 2D-primary derived features from a normalized v2 frame.
+ * Velocity and temporal wrist dz channels are divided by `dtS` (seconds since `prevFrame`),
+ * remaining `NaN` when `prevFrame` is null or `dtS` is null, non-finite, or `<= 0`.
  */
 export function derivedFeatures(
   frame: Float32Array,
-  prevFrame: Float32Array | null = null
+  prevFrame: Float32Array | null = null,
+  dtS: number | null = null
 ): Float32Array {
   const out = new Float32Array(DERIVED_FEATURES_PER_FRAME).fill(NaN);
   let idx = 0;
@@ -206,20 +209,22 @@ export function derivedFeatures(
     }
   }
 
+  const validDt = dtS !== null && Number.isFinite(dtS) && dtS > 0;
+
   for (const base of handBases) {
     const wx = ptX(frame, base, 0);
     const wy = ptY(frame, base, 0);
-    if (prevFrame !== null && valid2D(wx, wy)) {
+    if (prevFrame !== null && validDt && valid2D(wx, wy)) {
       const px = ptX(prevFrame, base, 0);
       const py = ptY(prevFrame, base, 0);
       if (valid2D(px, py)) {
         const dx = wx - px;
         const dy = wy - py;
-        const speed = Math.hypot(dx, dy);
-        if (speed > MIN_SEGMENT_NORM) {
-          out[idx] = speed;
-          out[idx + 1] = dx / speed;
-          out[idx + 2] = dy / speed;
+        const disp = Math.hypot(dx, dy);
+        if (disp > MIN_SEGMENT_NORM) {
+          out[idx] = disp / dtS;
+          out[idx + 1] = dx / disp;
+          out[idx + 2] = dy / disp;
         } else {
           out[idx] = 0.0;
           out[idx + 1] = 0.0;
@@ -241,22 +246,22 @@ export function derivedFeatures(
 
   const lwz = ptZ(frame, LEFT_HAND_START, 0);
   const rwz = ptZ(frame, RIGHT_HAND_START, 0);
-  if (prevFrame !== null) {
+  if (prevFrame !== null && validDt) {
     const plwx = ptX(prevFrame, LEFT_HAND_START, 0);
     const plwy = ptY(prevFrame, LEFT_HAND_START, 0);
     const plwz = ptZ(prevFrame, LEFT_HAND_START, 0);
     if (valid3D(lwx, lwy, lwz) && valid3D(plwx, plwy, plwz)) {
-      out[idx] = lwz - plwz;
+      out[idx] = (lwz - plwz) / dtS;
     }
   }
   idx++;
 
-  if (prevFrame !== null) {
+  if (prevFrame !== null && validDt) {
     const prwx = ptX(prevFrame, RIGHT_HAND_START, 0);
     const prwy = ptY(prevFrame, RIGHT_HAND_START, 0);
     const prwz = ptZ(prevFrame, RIGHT_HAND_START, 0);
     if (valid3D(rwx, rwy, rwz) && valid3D(prwx, prwy, prwz)) {
-      out[idx] = rwz - prwz;
+      out[idx] = (rwz - prwz) / dtS;
     }
   }
   idx++;
@@ -271,13 +276,23 @@ export function derivedFeatures(
 /**
  * Computes derived features across every frame of a flat normalized sequence.
  */
-export function derivedSequence(seq: Float32Array, numFrames: number): Float32Array {
+export function derivedSequence(
+  seq: Float32Array,
+  numFrames: number,
+  timestampsS: Float32Array | number[] | null = null
+): Float32Array {
+  if (timestampsS !== null && timestampsS.length !== numFrames) {
+    throw new Error(
+      `timestampsS length ${timestampsS.length} does not match numFrames ${numFrames}`
+    );
+  }
   const out = new Float32Array(numFrames * DERIVED_FEATURES_PER_FRAME);
   for (let t = 0; t < numFrames; t++) {
     const curStart = t * FEATURES_PER_FRAME;
     const frame = seq.subarray(curStart, curStart + FEATURES_PER_FRAME);
     const prev = t > 0 ? seq.subarray((t - 1) * FEATURES_PER_FRAME, curStart) : null;
-    out.set(derivedFeatures(frame, prev), t * DERIVED_FEATURES_PER_FRAME);
+    const dtS = t > 0 && timestampsS !== null ? timestampsS[t] - timestampsS[t - 1] : null;
+    out.set(derivedFeatures(frame, prev, dtS), t * DERIVED_FEATURES_PER_FRAME);
   }
   return out;
 }

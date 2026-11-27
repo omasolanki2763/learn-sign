@@ -26,6 +26,7 @@ interface DerivedGoldenCase {
   description: string;
   frame: (number | null)[];
   prev_frame: (number | null)[] | null;
+  dt_s?: number | null;
   expected: (number | null)[];
 }
 
@@ -51,14 +52,20 @@ describe('Derived Features (Contract v2)', () => {
     expect(DERIVED_Z_START + DERIVED_Z_COUNT).toBe(DERIVED_FEATURES_PER_FRAME);
   });
 
-  for (const caseKey of ['straight_hand_at_nose', 'fist_with_velocity', 'missing_hands']) {
+  for (const caseKey of [
+    'straight_hand_at_nose',
+    'fist_with_velocity',
+    'missing_hands',
+    'zero_dt_velocity_is_nan',
+  ]) {
     it(`matches golden case within 1e-5: ${caseKey}`, () => {
       const c = goldenCases[caseKey];
       const frame = toFloat32Array(c.frame)!;
       const prev = toFloat32Array(c.prev_frame);
+      const dtS = c.dt_s ?? null;
       const expected = toFloat32Array(c.expected)!;
 
-      const actual = derivedFeatures(frame, prev);
+      const actual = derivedFeatures(frame, prev, dtS);
       expect(actual.length).toBe(DERIVED_FEATURES_PER_FRAME);
 
       for (let i = 0; i < DERIVED_FEATURES_PER_FRAME; i++) {
@@ -84,7 +91,7 @@ describe('Derived Features (Contract v2)', () => {
     expect(DERIVED_TIP_DIST_START).toBeGreaterThan(DERIVED_BEND_START);
   });
 
-  it('computes derivedSequence across consecutive frames', () => {
+  it('computes derivedSequence across consecutive frames using timestamps', () => {
     const vel = goldenCases['fist_with_velocity'];
     const f0 = toFloat32Array(vel.prev_frame)!;
     const f1 = toFloat32Array(vel.frame)!;
@@ -92,11 +99,53 @@ describe('Derived Features (Contract v2)', () => {
     flatSeq.set(f0, 0);
     flatSeq.set(f1, FEATURES_PER_FRAME);
 
-    const out = derivedSequence(flatSeq, 2);
+    const out = derivedSequence(flatSeq, 2, [0.0, 0.1]);
     expect(out.length).toBe(2 * DERIVED_FEATURES_PER_FRAME);
     expect(Number.isNaN(out[DERIVED_VELOCITY_START])).toBe(true);
-    expect(out[DERIVED_FEATURES_PER_FRAME + DERIVED_VELOCITY_START + 3]).toBeCloseTo(0.5, 5);
+    expect(Number.isNaN(out[DERIVED_Z_START])).toBe(true);
+    expect(out[DERIVED_FEATURES_PER_FRAME + DERIVED_VELOCITY_START + 3]).toBeCloseTo(5.0, 5);
     expect(out[DERIVED_FEATURES_PER_FRAME + DERIVED_VELOCITY_START + 4]).toBeCloseTo(0.6, 5);
     expect(out[DERIVED_FEATURES_PER_FRAME + DERIVED_VELOCITY_START + 5]).toBeCloseTo(-0.8, 5);
+    expect(out[DERIVED_FEATURES_PER_FRAME + DERIVED_Z_START + 1]).toBeCloseTo(2.0, 5);
+  });
+
+  it('matches velocity across 15 FPS and 30 FPS for the same physical motion', () => {
+    const vel = goldenCases['fist_with_velocity'];
+    const base = toFloat32Array(vel.prev_frame)!;
+    const target = toFloat32Array(vel.frame)!;
+    const mid = new Float32Array(base.length);
+    for (let i = 0; i < base.length; i++) {
+      mid[i] = base[i] + 0.5 * (target[i] - base[i]);
+    }
+
+    const feat30 = derivedFeatures(mid, base, 1.0 / 30.0);
+    const feat15 = derivedFeatures(target, base, 1.0 / 15.0);
+
+    for (let i = 0; i < 6; i++) {
+      expect(
+        Math.abs(feat30[DERIVED_VELOCITY_START + i] - feat15[DERIVED_VELOCITY_START + i])
+      ).toBeLessThanOrEqual(1e-5);
+    }
+    for (let i = 0; i < 2; i++) {
+      expect(
+        Math.abs(feat30[DERIVED_Z_START + i] - feat15[DERIVED_Z_START + i])
+      ).toBeLessThanOrEqual(1e-5);
+    }
+  });
+
+  it('returns NaN velocity and temporal dz when dtS is missing or non-positive', () => {
+    const vel = goldenCases['fist_with_velocity'];
+    const frame = toFloat32Array(vel.frame)!;
+    const prev = toFloat32Array(vel.prev_frame)!;
+
+    for (const badDt of [null, 0, -0.05, NaN]) {
+      const out = derivedFeatures(frame, prev, badDt);
+      for (let i = 0; i < 6; i++) {
+        expect(Number.isNaN(out[DERIVED_VELOCITY_START + i])).toBe(true);
+      }
+      expect(Number.isNaN(out[DERIVED_Z_START])).toBe(true);
+      expect(Number.isNaN(out[DERIVED_Z_START + 1])).toBe(true);
+      expect(Number.isNaN(out[DERIVED_Z_START + 2])).toBe(false);
+    }
   });
 });
