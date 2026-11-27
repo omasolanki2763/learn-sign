@@ -59,6 +59,7 @@ jobs:
           python -m pip install --upgrade pip
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install ruff pytest numpy pandas pyarrow scikit-learn tensorboard
+          python -m pip install onnx==1.23.2 onnxruntime==1.32.0 onnxscript==0.7.2
 
       - name: Run ruff check
         run: ruff check .

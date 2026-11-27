@@ -21,6 +21,11 @@ dev = [
     "pytest>=8.0.0",
     "ruff>=0.8.0",
 ]
+bench = [
+    "onnx==1.23.2",
+    "onnxruntime==1.32.0",
+    "onnxscript==0.7.2",
+]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
