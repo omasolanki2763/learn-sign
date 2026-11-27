@@ -45,6 +45,7 @@ function renderShell(): string {
           </label>
         </div>
         <p id="status" role="status"></p>
+        <p class="bench-link"><a href="/bench.html">Open Step 0 Benchmark</a></p>
       </section>
     </main>
   `;

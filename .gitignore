@@ -40,5 +40,6 @@ reports/**/raw/
 # Internal planning notes (kept out of git tracking)
 .notes/
 
-# MediaPipe Task model files are downloaded, not committed
+# MediaPipe Task model files and ORT WASM runtime are downloaded/prepared at build time, not committed
 web/public/models/
+web/public/ort/
