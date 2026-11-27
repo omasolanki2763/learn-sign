@@ -51,6 +51,9 @@ POSE_BILATERAL_PAIRS: Final[tuple[tuple[int, int], ...]] = (
 # Anthropometric ratio (shoulder width / inter-eye distance) used when shoulders leave frame
 EYE_TO_SHOULDER_RATIO: Final[float] = 6.0
 
+# Vertical offset from eye midpoint downward to estimated shoulder midpoint (in shoulder widths)
+EYE_TO_SHOULDER_Y_OFFSET: Final[float] = 0.5
+
 # Total landmarks per frame: left hand (21) + right hand (21) + pose (17)
 TOTAL_LANDMARKS_PER_FRAME: Final[int] = HAND_POINTS + HAND_POINTS + POSE_POINTS
 

@@ -42,6 +42,9 @@ export const POSE_BILATERAL_PAIRS = [
 // Anthropometric ratio (shoulder width / inter-eye distance) when shoulders leave frame
 export const EYE_TO_SHOULDER_RATIO = 6.0;
 
+// Downward vertical offset from eye midpoint to estimated shoulder midpoint (in shoulder-width units)
+export const EYE_TO_SHOULDER_Y_OFFSET = 0.5;
+
 // Total landmarks per frame: left hand (21) + right hand (21) + pose (17)
 export const TOTAL_LANDMARKS_PER_FRAME = HAND_POINTS + HAND_POINTS + POSE_POINTS;
 

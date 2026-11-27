@@ -11,13 +11,18 @@ from learnsign.features.normalize import (
     estimate_dominant_hand,
     from_gislr_frame,
     normalize_frame,
+    normalize_frame_with_anchor,
+    normalize_sequence_with_anchors,
 )
 from learnsign.features.schema import (
     COORDINATES_PER_POINT,
     EYE_TO_SHOULDER_RATIO,
+    EYE_TO_SHOULDER_Y_OFFSET,
     FEATURE_CONTRACT_VERSION,
     FEATURES_PER_FRAME,
     HAND_POINTS,
+    LEFT_HAND_END,
+    LEFT_HAND_START,
     POSE_BILATERAL_PAIRS,
     POSE_IDS,
     POSE_POINTS,
@@ -65,6 +70,7 @@ def test_schema_constants() -> None:
     assert POSE_POINTS == len(POSE_IDS) == 17
     assert FEATURES_PER_FRAME == (HAND_POINTS * 2 + POSE_POINTS) * COORDINATES_PER_POINT
     assert EYE_TO_SHOULDER_RATIO > 1.0
+    assert EYE_TO_SHOULDER_Y_OFFSET > 0.0
 
 
 @pytest.mark.parametrize(
@@ -80,22 +86,32 @@ def test_schema_constants() -> None:
         "aspect_ratio_scaling",
         "head_anchors",
         "missing_shoulders_eye_fallback",
+        "same_frame_with_shoulder",
+        "same_frame_without_shoulder",
     ],
 )
 def test_normalize_frame_against_golden(golden_cases: dict, case_key: str) -> None:
-    """Assert normalize_frame produces exact expected output matching the golden file."""
+    """Assert normalize_frame and normalize_frame_with_anchor match the golden file."""
     case = golden_cases[case_key]
     left_hand = _to_numpy_array(case["left_hand"])
     right_hand = _to_numpy_array(case["right_hand"])
     pose = _to_numpy_array(case["pose"])
     aspect_ratio = float(case.get("aspect_ratio", 1.0))
     expected = _to_numpy_array(case["expected_frame"])
+    expected_source = case.get("expected_anchor_source")
 
     actual = normalize_frame(left_hand, right_hand, pose, aspect_ratio=aspect_ratio)
+    actual_with_src, anchor_source = normalize_frame_with_anchor(
+        left_hand, right_hand, pose, aspect_ratio=aspect_ratio
+    )
 
+    assert anchor_source == expected_source
     assert isinstance(actual, np.ndarray)
     assert actual.shape == (FEATURES_PER_FRAME,)
     assert actual.dtype == np.float32
+    np.testing.assert_array_equal(np.isnan(actual), np.isnan(actual_with_src))
+    valid_both = ~np.isnan(actual)
+    np.testing.assert_allclose(actual[valid_both], actual_with_src[valid_both], atol=1e-7)
 
     actual_nan = np.isnan(actual)
     expected_nan = np.isnan(expected)
@@ -180,7 +196,7 @@ def test_z_divided_by_scale_not_shifted() -> None:
 
 
 def test_eye_fallback_when_shoulders_missing() -> None:
-    """Assert missing shoulder falls back to eye distance * EYE_TO_SHOULDER_RATIO."""
+    """Assert missing shoulder shifts eye midpoint to shoulder midpoint and keeps scale."""
     pose = np.full((33, 3), np.nan, dtype=np.float32)
     pose[POSE_SLOT_LEFT_EYE] = [0.55, 0.25, 0.0]
     pose[POSE_SLOT_RIGHT_EYE] = [0.45, 0.25, 0.0]  # eye dist = 0.1, midpoint = (0.5, 0.25)
@@ -189,14 +205,66 @@ def test_eye_fallback_when_shoulders_missing() -> None:
     rh = np.zeros((HAND_POINTS, COORDINATES_PER_POINT), dtype=np.float32)
     rh[0] = [0.5, 0.55, 0.0]
 
-    out = normalize_frame(None, rh, pose)
+    out, src = normalize_frame_with_anchor(None, rh, pose)
     expected_scale = 0.1 * EYE_TO_SHOULDER_RATIO
+    expected_mid_y = 0.25 + expected_scale * EYE_TO_SHOULDER_Y_OFFSET
+    assert src == "eyes"
     assert np.isclose(out[RIGHT_HAND_START], 0.0, atol=1e-5)
-    assert np.isclose(out[RIGHT_HAND_START + 1], (0.55 - 0.25) / expected_scale, atol=1e-5)
+    assert np.isclose(
+        out[RIGHT_HAND_START + 1], (0.55 - expected_mid_y) / expected_scale, atol=1e-5
+    )
     rw_offset = POSE_START + POSE_SLOT_RIGHT_WRIST * COORDINATES_PER_POINT
-    assert np.isclose(out[rw_offset + 1], (0.55 - 0.25) / expected_scale, atol=1e-5)
+    assert np.isclose(out[rw_offset + 1], (0.55 - expected_mid_y) / expected_scale, atol=1e-5)
     lw_offset = POSE_START + POSE_SLOT_LEFT_WRIST * COORDINATES_PER_POINT
     assert np.isnan(out[lw_offset])
+
+
+def test_same_frame_with_vs_without_shoulder_consistency(golden_cases: dict) -> None:
+    """Assert dropping one shoulder yields identical normalized hands and switches anchor_source."""
+    with_sh = golden_cases["same_frame_with_shoulder"]
+    without_sh = golden_cases["same_frame_without_shoulder"]
+
+    feat_with, src_with = normalize_frame_with_anchor(
+        _to_numpy_array(with_sh["left_hand"]),
+        _to_numpy_array(with_sh["right_hand"]),
+        _to_numpy_array(with_sh["pose"]),
+    )
+    feat_without, src_without = normalize_frame_with_anchor(
+        _to_numpy_array(without_sh["left_hand"]),
+        _to_numpy_array(without_sh["right_hand"]),
+        _to_numpy_array(without_sh["pose"]),
+    )
+
+    assert src_with == "shoulders"
+    assert src_without == "eyes"
+    np.testing.assert_allclose(
+        feat_with[LEFT_HAND_START:LEFT_HAND_END],
+        feat_without[LEFT_HAND_START:LEFT_HAND_END],
+        atol=1e-5,
+    )
+    np.testing.assert_allclose(
+        feat_with[RIGHT_HAND_START:RIGHT_HAND_END],
+        feat_without[RIGHT_HAND_START:RIGHT_HAND_END],
+        atol=1e-5,
+    )
+
+
+def test_normalize_sequence_with_anchors(golden_cases: dict) -> None:
+    """Assert normalize_sequence_with_anchors returns per-frame features and anchor sources."""
+    c1 = golden_cases["same_frame_with_shoulder"]
+    c2 = golden_cases["same_frame_without_shoulder"]
+    lh = np.stack([_to_numpy_array(c1["left_hand"]), _to_numpy_array(c2["left_hand"])], axis=0)
+    rh = np.stack([_to_numpy_array(c1["right_hand"]), _to_numpy_array(c2["right_hand"])], axis=0)
+    poses = np.stack([_to_numpy_array(c1["pose"]), _to_numpy_array(c2["pose"])], axis=0)
+
+    seq, sources = normalize_sequence_with_anchors(lh, rh, poses)
+    assert seq.shape == (2, FEATURES_PER_FRAME)
+    assert sources == ["shoulders", "eyes"]
+    np.testing.assert_allclose(
+        seq[0, LEFT_HAND_START:RIGHT_HAND_END],
+        seq[1, LEFT_HAND_START:RIGHT_HAND_END],
+        atol=1e-5,
+    )
 
 
 def test_right_dominant_sequence_unchanged() -> None:

@@ -5,6 +5,7 @@
 import {
   COORDINATES_PER_POINT,
   EYE_TO_SHOULDER_RATIO,
+  EYE_TO_SHOULDER_Y_OFFSET,
   FEATURES_PER_FRAME,
   HAND_POINTS,
   LEFT_HAND_END,
@@ -20,6 +21,13 @@ import {
   RIGHT_HAND_END,
   RIGHT_HAND_START,
 } from './schema';
+
+export type AnchorSource = 'shoulders' | 'eyes';
+
+export interface NormalizedFrameResult {
+  features: Float32Array;
+  anchorSource: AnchorSource | null;
+}
 
 // Minimum 2D span threshold to guard against division-by-zero on degenerate frames
 const MIN_ANCHOR_SPAN = 1e-6;
@@ -54,27 +62,29 @@ function resolvePairAnchor(
 }
 
 /**
- * Normalizes a single frame's raw landmarks into the canonical v2 feature representation.
+ * Normalizes a single frame's raw landmarks into the canonical v2 feature representation and
+ * reports which anchor source resolved the frame (`shoulders`, `eyes`, or `null`).
  *
  * Uses primary shoulder anchor (11 <-> 12) and falls back to eye distance (2 <-> 5)
- * scaled by EYE_TO_SHOULDER_RATIO when either shoulder is missing or degenerate.
+ * scaled by EYE_TO_SHOULDER_RATIO with origin shifted downward by
+ * `scale2D * EYE_TO_SHOULDER_Y_OFFSET` to estimate the shoulder midpoint.
  */
-export function normalizeFrame(
+export function normalizeFrameWithAnchor(
   leftHand: Float32Array | null,
   rightHand: Float32Array | null,
   pose: Float32Array | null,
   aspectRatio: number = 1.0
-): Float32Array {
+): NormalizedFrameResult {
   const output = new Float32Array(FEATURES_PER_FRAME).fill(NaN);
 
   if (!pose) {
-    return output;
+    return { features: output, anchorSource: null };
   }
 
   const isFullPose = pose.length === 33 * COORDINATES_PER_POINT;
   const isSelectedPose = pose.length === POSE_POINTS * COORDINATES_PER_POINT;
   if (!isFullPose && !isSelectedPose) {
-    return output;
+    return { features: output, anchorSource: null };
   }
 
   const poseOffset = (slot: number): number =>
@@ -82,30 +92,39 @@ export function normalizeFrame(
 
   const lsOff = poseOffset(POSE_SLOT_LEFT_SHOULDER);
   const rsOff = poseOffset(POSE_SLOT_RIGHT_SHOULDER);
-  let anchor = resolvePairAnchor(
+  let anchorSource: AnchorSource | null = null;
+  let midX: number;
+  let midY: number;
+  let scale2D: number;
+
+  const shoulderAnchor = resolvePairAnchor(
     pose[lsOff] * aspectRatio,
     pose[lsOff + 1],
     pose[rsOff] * aspectRatio,
     pose[rsOff + 1]
   );
 
-  if (!anchor) {
+  if (shoulderAnchor) {
+    ({ midX, midY, scale2D } = shoulderAnchor);
+    anchorSource = 'shoulders';
+  } else {
     const leOff = poseOffset(POSE_SLOT_LEFT_EYE);
     const reOff = poseOffset(POSE_SLOT_RIGHT_EYE);
-    anchor = resolvePairAnchor(
+    const eyeAnchor = resolvePairAnchor(
       pose[leOff] * aspectRatio,
       pose[leOff + 1],
       pose[reOff] * aspectRatio,
       pose[reOff + 1],
       EYE_TO_SHOULDER_RATIO
     );
+    if (!eyeAnchor) {
+      return { features: output, anchorSource: null };
+    }
+    midX = eyeAnchor.midX;
+    scale2D = eyeAnchor.scale2D;
+    midY = eyeAnchor.midY + scale2D * EYE_TO_SHOULDER_Y_OFFSET;
+    anchorSource = 'eyes';
   }
-
-  if (!anchor) {
-    return output;
-  }
-
-  const { midX, midY, scale2D } = anchor;
 
   if (leftHand && leftHand.length >= LEFT_HAND_END - LEFT_HAND_START) {
     for (let i = 0; i < HAND_POINTS; i++) {
@@ -135,7 +154,19 @@ export function normalizeFrame(
     output[dstIdx + 2] = pose[srcIdx + 2] / scale2D;
   }
 
-  return output;
+  return { features: output, anchorSource };
+}
+
+/**
+ * Normalizes a single frame's raw landmarks into the canonical v2 feature representation.
+ */
+export function normalizeFrame(
+  leftHand: Float32Array | null,
+  rightHand: Float32Array | null,
+  pose: Float32Array | null,
+  aspectRatio: number = 1.0
+): Float32Array {
+  return normalizeFrameWithAnchor(leftHand, rightHand, pose, aspectRatio).features;
 }
 
 /**

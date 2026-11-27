@@ -9,15 +9,19 @@ from learnsign.features.derived import (
     derived_sequence,
 )
 from learnsign.features.normalize import (
+    AnchorSource,
     canonicalize_handedness,
     estimate_dominant_hand,
     from_gislr_frame,
     normalize_frame,
+    normalize_frame_with_anchor,
     normalize_sequence,
+    normalize_sequence_with_anchors,
 )
 from learnsign.features.schema import (
     COORDINATES_PER_POINT,
     EYE_TO_SHOULDER_RATIO,
+    EYE_TO_SHOULDER_Y_OFFSET,
     FEATURE_CONTRACT_VERSION,
     FEATURES_PER_FRAME,
     HAND_POINTS,
@@ -34,12 +38,14 @@ from learnsign.features.schema import (
 )
 
 __all__ = [
+    "AnchorSource",
     "COORDINATES_PER_POINT",
     "DERIVED_FEATURES_PER_FRAME",
     "DERIVED_PRIMARY_COUNT",
     "DERIVED_Z_COUNT",
     "DERIVED_Z_START",
     "EYE_TO_SHOULDER_RATIO",
+    "EYE_TO_SHOULDER_Y_OFFSET",
     "FEATURES_PER_FRAME",
     "FEATURE_CONTRACT_VERSION",
     "HAND_POINTS",
@@ -59,5 +65,7 @@ __all__ = [
     "estimate_dominant_hand",
     "from_gislr_frame",
     "normalize_frame",
+    "normalize_frame_with_anchor",
     "normalize_sequence",
+    "normalize_sequence_with_anchors",
 ]

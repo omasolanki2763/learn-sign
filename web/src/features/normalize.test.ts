@@ -9,9 +9,12 @@ import { fileURLToPath } from 'node:url';
 import {
   COORDINATES_PER_POINT,
   EYE_TO_SHOULDER_RATIO,
+  EYE_TO_SHOULDER_Y_OFFSET,
   FEATURE_CONTRACT_VERSION,
   FEATURES_PER_FRAME,
   HAND_POINTS,
+  LEFT_HAND_END,
+  LEFT_HAND_START,
   POSE_BILATERAL_PAIRS,
   POSE_IDS,
   POSE_POINTS,
@@ -24,8 +27,10 @@ import {
 } from './schema';
 import {
   normalizeFrame,
+  normalizeFrameWithAnchor,
   canonicalizeHandedness,
   estimateDominantHand,
+  type AnchorSource,
 } from './normalize';
 
 interface GoldenCase {
@@ -35,6 +40,7 @@ interface GoldenCase {
   right_hand?: (number | null)[][] | null;
   pose?: (number | null)[][] | null;
   aspect_ratio?: number;
+  expected_anchor_source?: AnchorSource | null;
   expected_frame?: (number | null)[];
   sequence?: (number | null)[][];
   expected_dominant?: string;
@@ -77,6 +83,7 @@ describe('Feature Contract v2 & Normalization', () => {
     expect(POSE_POINTS).toBe(POSE_IDS.length);
     expect(FEATURES_PER_FRAME).toBe((HAND_POINTS * 2 + POSE_POINTS) * COORDINATES_PER_POINT);
     expect(EYE_TO_SHOULDER_RATIO).toBeGreaterThan(1.0);
+    expect(EYE_TO_SHOULDER_Y_OFFSET).toBeGreaterThan(0.0);
   });
 
   const singleFrameCases = [
@@ -90,6 +97,8 @@ describe('Feature Contract v2 & Normalization', () => {
     'aspect_ratio_scaling',
     'head_anchors',
     'missing_shoulders_eye_fallback',
+    'same_frame_with_shoulder',
+    'same_frame_without_shoulder',
   ];
 
   for (const caseKey of singleFrameCases) {
@@ -102,20 +111,50 @@ describe('Feature Contract v2 & Normalization', () => {
       const expected = toFloat32Array(c.expected_frame);
 
       const actual = normalizeFrame(lh, rh, pose, aspectRatio);
+      const withAnchor = normalizeFrameWithAnchor(lh, rh, pose, aspectRatio);
 
+      expect(withAnchor.anchorSource).toBe(c.expected_anchor_source ?? null);
       expect(actual.length).toBe(FEATURES_PER_FRAME);
 
       for (let i = 0; i < FEATURES_PER_FRAME; i++) {
         const isExpNaN = Number.isNaN(expected[i]);
         const isActNaN = Number.isNaN(actual[i]);
         expect(isActNaN, `NaN mismatch at index ${i} in ${caseKey}`).toBe(isExpNaN);
+        expect(Number.isNaN(withAnchor.features[i])).toBe(isExpNaN);
 
         if (!isExpNaN) {
           expect(Math.abs(actual[i] - expected[i])).toBeLessThanOrEqual(1e-5);
+          expect(Math.abs(withAnchor.features[i] - expected[i])).toBeLessThanOrEqual(1e-5);
         }
       }
     });
   }
+
+  it('keeps normalized hands consistent when dropping a shoulder triggers eye fallback', () => {
+    const withSh = goldenCases['same_frame_with_shoulder'];
+    const withoutSh = goldenCases['same_frame_without_shoulder'];
+
+    const resWith = normalizeFrameWithAnchor(
+      flatten2D(withSh.left_hand),
+      flatten2D(withSh.right_hand),
+      flatten2D(withSh.pose)
+    );
+    const resWithout = normalizeFrameWithAnchor(
+      flatten2D(withoutSh.left_hand),
+      flatten2D(withoutSh.right_hand),
+      flatten2D(withoutSh.pose)
+    );
+
+    expect(resWith.anchorSource).toBe('shoulders');
+    expect(resWithout.anchorSource).toBe('eyes');
+
+    for (let i = LEFT_HAND_START; i < LEFT_HAND_END; i++) {
+      expect(Math.abs(resWith.features[i] - resWithout.features[i])).toBeLessThanOrEqual(1e-5);
+    }
+    for (let i = RIGHT_HAND_START; i < RIGHT_HAND_END; i++) {
+      expect(Math.abs(resWith.features[i] - resWithout.features[i])).toBeLessThanOrEqual(1e-5);
+    }
+  });
 
   it('swaps bilateral head and torso pairs on handedness canonicalization', () => {
     const frame = new Float32Array(FEATURES_PER_FRAME);
