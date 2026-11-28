@@ -1,0 +1,37 @@
+{
+  "signs": [
+    "eye",
+    "nose",
+    "ear",
+    "mouth",
+    "tooth",
+    "mom",
+    "dad",
+    "think",
+    "hat",
+    "sleep",
+    "book",
+    "table",
+    "car",
+    "shoe",
+    "yes",
+    "no",
+    "milk",
+    "water",
+    "dog",
+    "cat"
+  ],
+  "minimal_pairs": [
+    {"signs": ["mom", "dad"], "differs_in": "location"},
+    {"signs": ["eye", "nose"], "differs_in": "location"},
+    {"signs": ["nose", "mouth"], "differs_in": "location"},
+    {"signs": ["mouth", "tooth"], "differs_in": "location"},
+    {"signs": ["yes", "no"], "differs_in": "handshape"}
+  ],
+  "two_handed": [
+    "book",
+    "table",
+    "car",
+    "shoe"
+  ]
+}
